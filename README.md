@@ -15,7 +15,8 @@ Its paired server, [NineSong](https://github.com/Super-Badmen-Viper/NineSong), p
 As of March 22, 2026:
 
 - The latest Windows release is already live on Microsoft Store.
-- Direct Microsoft Store link: [ms-windows-store://pdp/?productid=9N0RWS2TJXG1](ms-windows-store://pdp/?productid=9N0RWS2TJXG1)
+- Microsoft Store web page: [https://apps.microsoft.com/detail/9N0RWS2TJXG1](https://apps.microsoft.com/detail/9N0RWS2TJXG1)
+- Windows Store deep link: `ms-windows-store://pdp/?productid=9N0RWS2TJXG1`
 - A 15-day free trial is currently available on Windows.
 - The refactored edition of this project is expected around two months later, which currently points to roughly May 2026.
 - App Store releases for macOS and iOS, plus the Google Play release for Android, are planned next.
@@ -105,7 +106,8 @@ The current roadmap expects the refactored edition around two months later, with
 
 ## Downloads
 
-- Windows production release: [Microsoft Store](ms-windows-store://pdp/?productid=9N0RWS2TJXG1)
+- Windows production release: [Microsoft Store Web Page](https://apps.microsoft.com/detail/9N0RWS2TJXG1)
+- Windows Store deep link: `ms-windows-store://pdp/?productid=9N0RWS2TJXG1`
 - Electron releases: https://github.com/Super-Badmen-Viper/NSMusicS/releases
 - Legacy WPF release: https://github.com/Super-Badmen-Viper/NSMusicS_WPF/releases/tag/NSMusicS_Win(WPF)_0.9.0
 - NineSong releases: https://github.com/Super-Badmen-Viper/NineSong/releases/
