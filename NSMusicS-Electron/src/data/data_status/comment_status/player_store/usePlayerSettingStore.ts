@@ -13,6 +13,7 @@ import { Audio_ApiService_of_Je } from '@/server/server_api/jellyfin_api/service
 import { store_server_user_model } from '@/server/server_management/store_server_user_model'
 import { Retrieval_ApiService_of_NineSong } from '@/server/server_api/ninesong_api/services_web/Scene/Music/Retrieval/index_service'
 import { store_server_login_info } from '@/data/data_status/comment_status/login_store/store_server_login_info'
+import { Media_Retrieval_ApiService_of_ND } from '@/server/server_api/navidrome_api/services_normal/media_retrieval/index_service'
 
 export const usePlayerSettingStore = defineStore('playerSetting', () => {
   const playerTagModifyStore = usePagePlayerTagModifyStore()
@@ -347,7 +348,55 @@ export const usePlayerSettingStore = defineStore('playerSetting', () => {
           await playerAudioStore.set_lyric(media_file.lyrics)
         }
       } else if (store_server_users.server_select_kind === 'navidrome') {
-        await playerAudioStore.set_lyric(media_file.lyrics)
+        const serverUrl = store_server_users.server_config_of_current_user_of_sqlite?.url
+        if (
+          serverUrl &&
+          store_server_user_model.username &&
+          store_server_user_model.token &&
+          store_server_user_model.salt
+        ) {
+          let lyrics = ''
+          try {
+            const media_Retrieval_ApiService_of_ND = new Media_Retrieval_ApiService_of_ND(
+              serverUrl + '/rest'
+            )
+            if (!player_model_cue.value && media_file.id) {
+              lyrics = normalizeNavidromeLyrics(
+                await media_Retrieval_ApiService_of_ND.getLyrics_id(
+                  store_server_user_model.username,
+                  store_server_user_model.token,
+                  store_server_user_model.salt,
+                  media_file.id
+                )
+              )
+            }
+            if (!lyrics) {
+              const artist = player_model_cue.value
+                ? playerAudioStore.this_audio_artist_name
+                : media_file.artist
+              const title = player_model_cue.value
+                ? playerAudioStore.this_audio_song_name
+                : media_file.title
+
+              if (artist || title) {
+                lyrics = normalizeNavidromeLyrics(
+                  await media_Retrieval_ApiService_of_ND.getLyrics_filter(
+                    store_server_user_model.username,
+                    store_server_user_model.token,
+                    store_server_user_model.salt,
+                    artist ?? '',
+                    title ?? ''
+                  )
+                )
+              }
+            }
+          } catch (error) {
+            console.error('Failed to fetch Navidrome lyrics:', error)
+          }
+          await playerAudioStore.set_lyric(lyrics || media_file.lyrics || '')
+        } else {
+          await playerAudioStore.set_lyric(media_file.lyrics || '')
+        }
       }
     } else if (store_server_user_model.model_server_type_of_local) {
       await playerAudioStore.set_lyric(media_file.lyrics)
@@ -369,9 +418,86 @@ export const usePlayerSettingStore = defineStore('playerSetting', () => {
         const centiseconds = Math.floor((totalSeconds * 100) % 100)
         const time = `[${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}.${String(centiseconds).padStart(2, '0')}]`
         return `${time}${item.Text}`
-      })
+    })
       .join('\n')
     return `${lrcLines}`
+  }
+
+  function convertToLRC_Array_of_ND(
+    lyrics: {
+      start: number
+      value: string
+    }[]
+  ): string {
+    return lyrics
+      .map((item) => {
+        const start = Number(item.start) || 0
+        const minutes = Math.floor(start / 60000)
+        const seconds = Math.floor((start % 60000) / 1000)
+        const centiseconds = Math.floor((start % 1000) / 10)
+        const time = `[${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}.${String(centiseconds).padStart(2, '0')}]`
+        return `${time}${item.value ?? ''}`
+      })
+      .join('\n')
+  }
+
+  function normalizeNavidromeLyrics(resp: any): string {
+    if (!resp) return ''
+    if (typeof resp === 'string') return resp.trim()
+
+    const payload = resp['subsonic-response'] ?? resp['subsonic_response'] ?? resp
+    const structuredLyrics = payload?.lyricsList?.structuredLyrics
+    const structuredList = Array.isArray(structuredLyrics)
+      ? structuredLyrics
+      : structuredLyrics
+        ? [structuredLyrics]
+        : []
+    const firstStructuredLyrics = structuredList[0]
+    const lines = Array.isArray(firstStructuredLyrics?.line)
+      ? firstStructuredLyrics.line
+      : firstStructuredLyrics?.line
+        ? [firstStructuredLyrics.line]
+        : []
+    if (lines.length > 0) {
+      return convertToLRC_Array_of_ND(
+        lines.map((line: any) => ({
+          start: Number(line?.start) || 0,
+          value: String(line?.value ?? ''),
+        }))
+      )
+    }
+
+    const lyrics = typeof payload?.lyrics === 'string' ? payload.lyrics : resp.lyrics
+    if (typeof lyrics !== 'string' || lyrics.trim().length === 0) {
+      return ''
+    }
+
+    try {
+      const decoded = JSON.parse(lyrics)
+      if (!Array.isArray(decoded)) {
+        return lyrics
+      }
+
+      const syncedLines = decoded.flatMap((block: any) => {
+        if (block?.synced && Array.isArray(block.line)) {
+          return block.line
+        }
+        return []
+      })
+
+      if (syncedLines.length === 0) {
+        return lyrics
+      }
+
+      return convertToLRC_Array_of_ND(
+        syncedLines.map((line: any) => ({
+          start: Number(line?.start) || 0,
+          value: String(line?.value ?? ''),
+        }))
+      )
+    } catch {
+      return lyrics
+    }
   }
 
   // Watchers

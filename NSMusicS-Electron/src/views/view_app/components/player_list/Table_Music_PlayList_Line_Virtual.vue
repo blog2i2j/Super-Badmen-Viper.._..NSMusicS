@@ -85,7 +85,7 @@ import { store_general_model_player_list } from '@/server/server_api_store/serve
 import { store_server_users } from '@/server/server_management/store_server_users'
 import { Get_NineSong_Temp_Data_To_LocalSqlite } from '@/server/server_api/ninesong_api/services_web_instant_access/class_Get_NineSong_Temp_Data_To_LocalSqlite'
 import { store_server_login_info } from '@/data/data_status/comment_status/login_store/store_server_login_info'
-import { Get_Navidrome_Temp_Data_To_LocalSqlite } from '@/server/server_api/navidrome_api/services_web_instant_access/class_Get_Navidrome_Temp_Data_To_LocalSqlite'
+import { Get_Navidrome_Public_Data_To_LocalSqlite } from '@/server/server_api/navidrome_api/services_public_middleware/class_Get_Navidrome_Public_Data_To_LocalSqlite'
 const contextmenu = ref(null)
 async function update_playlist_addMediaFile(id: any, playlist_id: any) {
   try {
@@ -208,7 +208,7 @@ const onScrollEnd = async () => {
           '30'
         )
       } else if (store_server_users.server_select_kind === 'navidrome') {
-        let get_Navidrome_Temp_Data_To_LocalSqlite = new Get_Navidrome_Temp_Data_To_LocalSqlite()
+        let get_Navidrome_Temp_Data_To_LocalSqlite = new Get_Navidrome_Public_Data_To_LocalSqlite()
         await get_Navidrome_Temp_Data_To_LocalSqlite.get_random_song_list(
           store_server_users.server_config_of_current_user_of_sqlite?.url + '/rest',
           store_server_user_model.username,

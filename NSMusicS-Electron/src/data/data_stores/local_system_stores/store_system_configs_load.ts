@@ -56,10 +56,6 @@ export const store_system_configs_load = reactive({
           '' +
             system_Configs_Read.app_Configs.value['model_server_type_of_local_server_download'] ===
           'true'
-        store_server_user_model.authorization_of_nd =
-          '' + system_Configs_Read.app_Configs.value['authorization_of_nd']
-        store_server_user_model.client_unique_id =
-          '' + system_Configs_Read.app_Configs.value['client_unique_id']
         const pageMediaStore = usePageMediaStore()
         const pageAlbumStore = usePageAlbumStore()
         const pageArtistStore = usePageArtistStore()
@@ -310,10 +306,22 @@ export const store_system_configs_load = reactive({
         /// player_Configs_of_Audio_Info
         // Golang // NineSong流媒体模块未完成开发前，不开放回放功能(恢复上次播放数据)
         if (isElectron) {
+          const savedMediumImageUrl =
+            '' +
+            system_Configs_Read.player_Configs_of_Audio_Info.value[
+              'this_audio_file_medium_image_url'
+            ]
+          const savedPageTopAlbumImageUrl =
+            '' + system_Configs_Read.player_Configs_of_Audio_Info.value['page_top_album_image_url']
+
           playerAudioStore.this_audio_file_path =
             '' + system_Configs_Read.player_Configs_of_Audio_Info.value['this_audio_file_path']
-          playerAudioStore.this_audio_file_medium_image_url = ''
-          // playerAudioStore.this_audio_file_medium_image_url = '' + system_Configs_Read.player_Configs_of_Audio_Info.value['this_audio_file_medium_image_url']
+          playerAudioStore.this_audio_file_medium_image_url =
+            savedMediumImageUrl !== 'undefined' &&
+            savedMediumImageUrl !== 'null' &&
+            savedMediumImageUrl.length > 0
+              ? savedMediumImageUrl
+              : ''
           await playerAudioStore.set_lyric(
             '' + system_Configs_Read.player_Configs_of_Audio_Info.value['this_audio_file_lyric']
           )
@@ -340,7 +348,13 @@ export const store_system_configs_load = reactive({
             '' + system_Configs_Read.player_Configs_of_Audio_Info.value['this_audio_album_favorite']
           //
           playerAudioStore.page_top_album_image_url =
-            '' + system_Configs_Read.player_Configs_of_Audio_Info.value['page_top_album_image_url']
+            playerAudioStore.this_audio_file_medium_image_url.length > 0
+              ? playerAudioStore.this_audio_file_medium_image_url
+              : savedPageTopAlbumImageUrl !== 'undefined' &&
+                  savedPageTopAlbumImageUrl !== 'null' &&
+                  savedPageTopAlbumImageUrl.length > 0
+                ? savedPageTopAlbumImageUrl
+                : ''
           playerAudioStore.page_top_album_id =
             '' + system_Configs_Read.player_Configs_of_Audio_Info.value['page_top_album_id']
           playerAudioStore.page_top_album_name =
@@ -608,26 +622,78 @@ export const store_system_configs_load = reactive({
       /// playlist media_file_id_of_list
       try {
         // Golang // NineSong流媒体模块未完成开发前，不开放回放功能(恢复上次播放数据)
+        const savedCurrentPlaylistIndex = Number(
+          '' +
+            system_Configs_Read.player_Configs_of_Audio_Info.value['this_audio_Index_of_play_list']
+        )
         if (isElectron) {
-          playlistStore.playlist_datas_CurrentPlayList_ALLMediaIds =
+          playlistStore.playlist_datas_CurrentPlayList_ALLMediaIds = Array.isArray(
             system_Configs_Read.playlist_File_Configs.value
+          )
+            ? [...system_Configs_Read.playlist_File_Configs.value]
+            : []
           const get_PlaylistInfo_From_LocalSqlite = new Get_LocalSqlite_PlaylistInfo()
-          if (store_server_user_model.model_server_type_of_local) {
+          const hasSavedPlaylistIds =
+            playlistStore.playlist_datas_CurrentPlayList_ALLMediaIds.length > 0
+          if (hasSavedPlaylistIds) {
             playlistStore.playlist_MediaFiles_temporary =
               get_PlaylistInfo_From_LocalSqlite.Get_Playlist_Media_File_Id_of_list(
                 playlistStore.playlist_datas_CurrentPlayList_ALLMediaIds
-              )
+              ) ?? []
           } else if (store_server_user_model.model_server_type_of_web) {
             playlistStore.playlist_MediaFiles_temporary =
-              get_PlaylistInfo_From_LocalSqlite.Get_Playlist_Media_File_of_list()
+              get_PlaylistInfo_From_LocalSqlite.Get_Playlist_Media_File_of_list() ?? []
+          } else {
+            playlistStore.playlist_MediaFiles_temporary = []
           }
-          // Get Play_Id
-          const media_file = playlistStore.playlist_MediaFiles_temporary.find(
+
+          const restoredPlaylist = Array.isArray(playlistStore.playlist_MediaFiles_temporary)
+            ? playlistStore.playlist_MediaFiles_temporary
+            : []
+          const restoredCurrentIndexById = restoredPlaylist.findIndex(
             (row) => row.id === playerAudioStore.this_audio_song_id
           )
+          const restoredCurrentIndex =
+            restoredCurrentIndexById !== -1
+              ? restoredCurrentIndexById
+              : savedCurrentPlaylistIndex >= 0 &&
+                  savedCurrentPlaylistIndex < restoredPlaylist.length
+                ? savedCurrentPlaylistIndex
+                : -1
+          const media_file =
+            restoredCurrentIndex !== -1 ? restoredPlaylist[restoredCurrentIndex] : undefined
+
           if (media_file) {
-            playerAudioStore.this_audio_play_id = media_file.play_id
-            playerAudioStore.this_audio_file_medium_image_url = media_file.medium_image_url
+            playerAudioStore.this_audio_play_id =
+              media_file.play_id ?? media_file.id ?? playerAudioStore.this_audio_play_id
+            playerAudioStore.this_audio_file_path =
+              media_file.path ?? playerAudioStore.this_audio_file_path
+            playerAudioStore.this_audio_file_medium_image_url =
+              media_file.medium_image_url ?? playerAudioStore.this_audio_file_medium_image_url
+            playerAudioStore.this_audio_artist_id =
+              media_file.artist_id ?? playerAudioStore.this_audio_artist_id
+            playerAudioStore.this_audio_artist_name =
+              media_file.artist ?? playerAudioStore.this_audio_artist_name
+            playerAudioStore.this_audio_song_name =
+              media_file.title ?? playerAudioStore.this_audio_song_name
+            playerAudioStore.this_audio_song_id =
+              media_file.id ?? playerAudioStore.this_audio_song_id
+            playerAudioStore.this_audio_song_favorite =
+              media_file.favorite ?? playerAudioStore.this_audio_song_favorite
+            playerAudioStore.this_audio_song_rating = Number(
+              media_file.rating ?? playerAudioStore.this_audio_song_rating
+            )
+            playerAudioStore.this_audio_album_name =
+              media_file.album ?? playerAudioStore.this_audio_album_name
+            playerAudioStore.this_audio_album_id =
+              media_file.album_id ?? playerAudioStore.this_audio_album_id
+            playerAudioStore.this_audio_song_encoding_format =
+              media_file.encoding_format ?? playerAudioStore.this_audio_song_encoding_format
+            playerAudioStore.this_audio_song_suffix =
+              media_file.suffix ?? playerAudioStore.this_audio_song_suffix
+            playerAudioStore.this_audio_Index_of_play_list = restoredCurrentIndex
+          } else {
+            playerAudioStore.this_audio_Index_of_play_list = savedCurrentPlaylistIndex
           }
         }
         // init_server_token
@@ -636,9 +702,6 @@ export const store_system_configs_load = reactive({
       } catch (e) {
         console.error(e)
       }
-      playerAudioStore.this_audio_Index_of_play_list = Number(
-        '' + system_Configs_Read.player_Configs_of_Audio_Info.value['this_audio_Index_of_play_list']
-      )
 
       /// close
       try {

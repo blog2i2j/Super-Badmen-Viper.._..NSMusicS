@@ -830,8 +830,8 @@ watch(
 onMounted(async () => {
   try {
     if (!isElectron) {
-      store_system_configs_load.app_configs_loading = true;
-      /// 
+      store_system_configs_load.app_configs_loading = true
+      ///
       const lang = String(localStorage.getItem('jwt_lang'))
       if (lang != null && lang !== 'null' && lang !== '') {
         locale.value = lang
@@ -876,9 +876,16 @@ watch(
     store_system_configs_save.save_system_config_of_App_Configs()
   }
 )
+
+function persistPlaybackState() {
+  store_system_configs_save.save_system_playlist_item_id_config()
+  store_system_configs_save.save_system_config_of_Player_Configs_of_Audio_Info()
+}
+
 if (isElectron) {
+  window.addEventListener('beforeunload', persistPlaybackState)
   ipcRenderer.on('tray-app-quit', () => {
-    store_system_configs_save.save_system_config_of_Player_Configs_of_Audio_Info()
+    persistPlaybackState()
   })
 }
 

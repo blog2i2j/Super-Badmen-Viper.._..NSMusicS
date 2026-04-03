@@ -9,7 +9,7 @@ import { usePlayerAudioStore } from '@/data/data_status/comment_status/player_st
 import { store_router_data_logic } from '@/router/router_store/store_router_data_logic'
 
 import { store_system_configs_load } from '@/data/data_stores/local_system_stores/store_system_configs_load'
-import { User_Authorization_ApiWebService_of_ND } from '@/server/server_api/navidrome_api/services_web/user_authorization/index_service'
+import { User_ApiService_of_ND } from '@/server/server_api/navidrome_api/services_normal/user_management/index_service'
 import { usePlayerSettingStore } from '@/data/data_status/comment_status/player_store/usePlayerSettingStore'
 import { ipcRenderer, isElectron } from '@/utils/electron/isElectron'
 import { usePageAlbumStore } from '@/data/data_status/page_status/album_store/usePageAlbumStore'
@@ -34,7 +34,6 @@ export const store_server_user_model = reactive({
   salt: '',
   token: '',
   password: '',
-  authorization_of_nd: '',
 
   server_login_model_of_apikey: false,
   userid_of_Je: '',
@@ -45,7 +44,6 @@ export const store_server_user_model = reactive({
   model_server_type_of_web: true,
   model_server_type_of_local: false,
   model_server_type_of_local_server_download: false,
-  client_unique_id: '',
   server_get_count: 15,
 
   album: 'album',
@@ -160,10 +158,22 @@ export const store_server_user_model = reactive({
 
   async refresh_model_server_type_of_web() {
     if (store_server_users.server_select_kind === 'navidrome') {
-      const user_Authorization_ApiWebService_of_ND = new User_Authorization_ApiWebService_of_ND(
-        store_server_users.server_config_of_current_user_of_sqlite?.url
-      )
-      return await user_Authorization_ApiWebService_of_ND.get_token()
+      const url = store_server_users.server_config_of_current_user_of_sqlite?.url
+      const username = store_server_user_model.username?.trim()
+      const token = store_server_user_model.token?.trim()
+      const salt = store_server_user_model.salt?.trim()
+
+      if (!url || !username || !token || !salt) {
+        return false
+      }
+
+      const user_ApiService_of_ND = new User_ApiService_of_ND(url + '/rest')
+      const userData = await user_ApiService_of_ND.getUser(username, token, salt)
+      const status = userData?.['subsonic-response']?.status
+      if (status === 'ok') {
+        return true
+      }
+      return false
     } else if (store_server_users.server_select_kind === 'ninesong') {
       if (
         store_server_users.server_config_of_current_user_of_sqlite?.url === undefined ||

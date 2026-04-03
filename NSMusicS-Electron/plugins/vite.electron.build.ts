@@ -3,12 +3,31 @@ import * as electronBuilder from 'electron-builder'
 import path from 'path'
 import fs from 'fs'
 
+const resolveBuildTargets = (platform?: string) => {
+  if (!platform) {
+    return undefined
+  }
+
+  switch (platform) {
+    case 'win':
+      return electronBuilder.Platform.WINDOWS.createTarget()
+    case 'linux':
+      return electronBuilder.Platform.LINUX.createTarget()
+    case 'mac':
+      return electronBuilder.Platform.MAC.createTarget()
+    default:
+      throw new Error(
+        `Unsupported NSMUSICS_ELECTRON_PLATFORM: ${platform}. Expected one of: win, linux, mac`
+      )
+  }
+}
+
 // 导出Vite插件函数
 export const viteElectronBuild = (): Plugin => {
   return {
     name: 'vite-electron-build',
     // closeBundle是Vite的一个插件钩子函数，用于在Vite构建完成后执行一些自定义逻辑。
-    closeBundle() {
+    async closeBundle() {
       // 定义初始化Electron的函数
       const initElectron = () => {
         // 使用esbuild编译TypeScript代码为JavaScript
@@ -31,10 +50,14 @@ export const viteElectronBuild = (): Plugin => {
       fs.writeSync(fs.openSync('dist/package.json', 'w'), JSON.stringify(json, null, 2))
 
       // 创建一个空的node_modules目录 不然会打包失败
-      fs.mkdirSync(path.join(process.cwd(), 'dist/node_modules'))
+      fs.mkdirSync(path.join(process.cwd(), 'dist/node_modules'), { recursive: true })
+
+      const platform = process.env.NSMUSICS_ELECTRON_PLATFORM
+      const targets = resolveBuildTargets(platform)
 
       // 使用electron-builder打包Electron应用程序
-      electronBuilder.build({
+      await electronBuilder.build({
+        targets,
         config: {
           appId: 'github.com.nsmusics.xiang.cheng',
           productName: 'NSMusicS',
@@ -61,7 +84,7 @@ export const viteElectronBuild = (): Plugin => {
           // resources/config/png: sudo chmod 0644 *
           linux: {
             target: ['AppImage', 'deb'],
-            icon: 'resources/config/NSMusicS.icns',
+            icon: 'resources/config/png',
             desktop: {
               Icon: '/usr/share/icons/hicolor/512x512/apps/nsmusics.png',
             },
@@ -112,7 +135,7 @@ export const viteElectronBuild = (): Plugin => {
             gatekeeperAssess: false,
             entitlements: 'build/entitlements.mac.plist',
             entitlementsInherit: 'build/entitlements.mac.plist',
-            identity: null  // 设置为null以跳过签名（适用于本地构建）
+            identity: null, // 设置为null以跳过签名（适用于本地构建）
           },
           nsis: {
             oneClick: false,

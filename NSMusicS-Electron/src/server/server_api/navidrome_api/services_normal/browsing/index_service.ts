@@ -1,6 +1,23 @@
 import { Navidrome_Api_Services_Normal } from '../Navidrome_Api_Services_Normal'
 
 export class Browsing_ApiService_of_ND extends Navidrome_Api_Services_Normal {
+  public async getAlbumList2(
+    username: string,
+    token: string,
+    salt: string,
+    params: {
+      type: string
+      size: string
+      offset: string
+      fromYear?: string
+      toYear?: string
+      genre?: string
+      musicFolderId?: string
+    }
+  ): Promise<any> {
+    return this.sendRequest(username, token, salt, 'getAlbumList2', params)
+  }
+
   public async getMusicFolders(username: string, token: string, salt: string): Promise<any> {
     return this.sendRequest(username, token, salt, 'getMusicFolders')
   }
@@ -9,6 +26,9 @@ export class Browsing_ApiService_of_ND extends Navidrome_Api_Services_Normal {
   }
   public async getArtists_ALL(username: string, token: string, salt: string): Promise<any> {
     return this.sendRequest(username, token, salt, 'getArtists')
+  }
+  public async getStarred2(username: string, token: string, salt: string): Promise<any> {
+    return this.sendRequest(username, token, salt, 'getStarred2')
   }
   public async getGenres(username: string, token: string, salt: string): Promise<any> {
     return this.sendRequest(username, token, salt, 'getGenres')

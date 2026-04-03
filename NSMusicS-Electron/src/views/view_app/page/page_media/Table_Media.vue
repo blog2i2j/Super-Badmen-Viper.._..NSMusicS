@@ -800,7 +800,7 @@ import { store_general_fetch_media_list } from '@/server/server_api_store/server
 import { store_router_data_info } from '@/router/router_store/store_router_data_info'
 import { store_general_fetch_album_list } from '@/server/server_api_store/server_api_core/page/page_album/store_general_fetch_album_list'
 import { store_general_fetch_player_list } from '@/server/server_api_store/server_api_core/components/player_list/store_general_fetch_player_list'
-import { Get_Navidrome_Temp_Data_To_LocalSqlite } from '@/server/server_api/navidrome_api/services_web_instant_access/class_Get_Navidrome_Temp_Data_To_LocalSqlite'
+import { Get_Navidrome_Public_Data_To_LocalSqlite } from '@/server/server_api/navidrome_api/services_public_middleware/class_Get_Navidrome_Public_Data_To_LocalSqlite'
 import { store_server_users } from '@/server/server_management/store_server_users'
 import { store_router_data_logic } from '@/router/router_store/store_router_data_logic'
 import { store_general_model_player_list } from '@/server/server_api_store/server_api_core/components/player_list/store_general_model_player_list'
@@ -1283,7 +1283,7 @@ async function begin_random_play_model() {
         '30'
       )
     } else if (store_server_users.server_select_kind === 'navidrome') {
-      let get_Navidrome_Temp_Data_To_LocalSqlite = new Get_Navidrome_Temp_Data_To_LocalSqlite()
+      let get_Navidrome_Temp_Data_To_LocalSqlite = new Get_Navidrome_Public_Data_To_LocalSqlite()
       await get_Navidrome_Temp_Data_To_LocalSqlite.get_random_song_list(
         store_server_users.server_config_of_current_user_of_sqlite?.url + '/rest',
         store_server_user_model.username,

@@ -2,7 +2,6 @@ import { reactive } from 'vue'
 import { store_server_users } from '@/server/server_management/store_server_users'
 import { store_server_user_model } from '@/server/server_management/store_server_user_model'
 import { store_system_configs_save } from '@/data/data_stores/local_system_stores/store_system_configs_save'
-import { User_Authorization_ApiWebService_of_ND } from '@/server/server_api/navidrome_api/services_web/user_authorization/index_service'
 import { Set_Navidrome_ALL_Data_To_LocalSqlite } from '@/server/server_api/navidrome_api/services_normal_middleware/class_Set_Navidrome_ALL_Data_To_LocalSqlite'
 import { User_ApiService_of_ND } from '@/server/server_api/navidrome_api/services_normal/user_management/index_service'
 import { Set_LocalSqlite_ServerInfo } from '@/data/data_repository/app_repository/LocalSqlite_Set_ServerInfo'
@@ -135,11 +134,6 @@ export const store_server_navidrome_userdata_logic = reactive({
         store_server_users.server_config_of_all_user_of_sqlite[index]
       )
       if (store_server_user_model.model_server_type_of_web) {
-        console.log('store_server_user_model.model_server_type_of_web')
-        const user_Authorization_ApiWebService_of_ND = new User_Authorization_ApiWebService_of_ND(
-          store_server_users.server_config_of_current_user_of_sqlite?.url
-        )
-        await user_Authorization_ApiWebService_of_ND.get_token()
         store_system_configs_save.save_system_config_of_App_Configs()
         store_system_configs_save.save_system_config_of_Servers_Config()
       }

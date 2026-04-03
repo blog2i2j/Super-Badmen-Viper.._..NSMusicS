@@ -1,8 +1,8 @@
 import { reactive } from 'vue'
 
 import { store_server_users } from '@/server/server_management/store_server_users'
-
 import { Media_Annotation_ApiService_of_ND } from '@/server/server_api/navidrome_api/services_normal/media_annotation/index_service'
+
 import { store_server_user_model } from '@/server/server_management/store_server_user_model'
 import { UserFavoriteItems_ApiService_of_Je } from '@/server/server_api/jellyfin_api/services_web/UserFavoriteItems/index_service'
 import { Annotation_ApiService_of_NineSong } from '@/server/server_api/ninesong_api/services_web/Scene/Music/Annotation/index_service'
@@ -99,16 +99,8 @@ export const store_server_data_set_albumInfo = reactive({
       (store_server_users.server_select_kind === 'navidrome' &&
         store_server_user_model.model_server_type_of_web)
     ) {
-      await new Media_Annotation_ApiService_of_ND(
-        store_server_users.server_config_of_current_user_of_sqlite?.url + '/rest'
-      ).set_scrobble(
-        store_server_user_model.username,
-        store_server_user_model.token,
-        store_server_user_model.salt,
-        item_id,
-        '',
-        ''
-      )
+      // Subsonic/Navidrome public scrobble only accepts media ids.
+      return
     } else if (
       store_server_user_model.model_server_type_of_web &&
       store_server_users.server_select_kind === 'ninesong'

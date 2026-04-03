@@ -13,6 +13,13 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
+    "build:win": "powershell -ExecutionPolicy Bypass -File ./scripts/electron/build-package-win.ps1",
+    "build:linux": "bash ./scripts/electron/build-package-linux.sh",
+    "build:mac": "bash ./scripts/electron/build-package-mac.sh",
+    "docker:build:win": "powershell -ExecutionPolicy Bypass -File ./scripts/docker/docker-build-win.ps1",
+    "docker:upload:win": "powershell -ExecutionPolicy Bypass -File ./scripts/docker/docker-upload-win.ps1",
+    "docker:build:mac": "bash ./scripts/docker/docker-build-mac.sh",
+    "docker:upload:mac": "bash ./scripts/docker/docker-upload-mac.sh",
     "preview": "vite preview",
     "server": "nodemon server.js",
     "lint": "eslint . --ext .vue,.js,.ts,.jsx,.tsx --fix",

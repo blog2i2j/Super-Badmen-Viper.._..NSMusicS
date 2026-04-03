@@ -73,8 +73,6 @@ export const store_system_configs_save = reactive({
           model_server_type_of_local_server_download: String(
             store_server_user_model.model_server_type_of_local_server_download
           ),
-          authorization_of_nd: String(store_server_user_model.authorization_of_nd),
-          client_unique_id: String(store_server_user_model.client_unique_id),
           media_page_sizes: String(pageMediaStore.media_page_sizes),
           album_page_sizes: String(pageAlbumStore.album_page_sizes),
           artist_page_sizes: String(pageArtistStore.artist_page_sizes),
@@ -243,6 +241,10 @@ export const store_system_configs_save = reactive({
     }
   },
   async save_system_config_of_Player_Configs_of_Audio_Info() {
+    if (store_system_configs_load.app_configs_loading) {
+      return
+    }
+
     const playerSettingStore = usePlayerSettingStore()
     const playerAppearanceStore = usePlayerAppearanceStore()
     const playerAudioStore = usePlayerAudioStore()
@@ -319,36 +321,53 @@ export const store_system_configs_save = reactive({
     }
   },
   async save_system_playlist_item_id_config() {
+    if (store_system_configs_load.app_configs_loading) {
+      return
+    }
+
     const playlistStore = usePlaylistStore()
     if (isElectron) {
+      let dbConfig: any = null
+      let dbPlaylistSnapshot: any = null
       try {
-        let db: any = null
-        if (store_server_user_model.model_server_type_of_local) {
-          db = require('better-sqlite3')(store_system_configs_info.nsmusics_db)
-          db.pragma('journal_mode = WAL')
-          db.exec('PRAGMA foreign_keys = OFF')
+        const playlistItems = Array.isArray(playlistStore.playlist_MediaFiles_temporary)
+          ? playlistStore.playlist_MediaFiles_temporary
+          : []
+        const playlistIds = playlistItems
+          .map((item: any) => item?.id)
+          .filter((id: string) => typeof id === 'string' && id.length > 0)
 
-          const system_Configs_Write = new Write_LocalSqlite_System_Configs()
-          system_Configs_Write.system_playlist_item_id_config(
-            db,
-            playlistStore.playlist_datas_CurrentPlayList_ALLMediaIds
-          )
-        } else {
-          db = require('better-sqlite3')(store_system_configs_info.navidrome_db)
-          db.pragma('journal_mode = WAL')
-          db.exec('PRAGMA foreign_keys = OFF')
+        playlistStore.playlist_datas_CurrentPlayList_ALLMediaIds = [...playlistIds]
 
-          const system_Configs_Write = new Write_LocalSqlite_System_Configs()
+        const system_Configs_Write = new Write_LocalSqlite_System_Configs()
+
+        dbConfig = require('better-sqlite3')(store_system_configs_info.nsmusics_db)
+        dbConfig.pragma('journal_mode = WAL')
+        dbConfig.exec('PRAGMA foreign_keys = OFF')
+        system_Configs_Write.system_playlist_item_id_config(dbConfig, playlistIds)
+
+        if (store_server_user_model.model_server_type_of_web) {
+          dbPlaylistSnapshot = require('better-sqlite3')(store_system_configs_info.navidrome_db)
+          dbPlaylistSnapshot.pragma('journal_mode = WAL')
+          dbPlaylistSnapshot.exec('PRAGMA foreign_keys = OFF')
           system_Configs_Write.system_playlist_item_config(
-            db,
+            dbPlaylistSnapshot,
             playlistStore.playlist_MediaFiles_temporary
           )
         }
+
         await this.save_system_config_of_App_Configs()
-        db.close()
-        db = null
       } catch (e) {
         console.error(e)
+      } finally {
+        if (dbPlaylistSnapshot) {
+          dbPlaylistSnapshot.close()
+          dbPlaylistSnapshot = null
+        }
+        if (dbConfig) {
+          dbConfig.close()
+          dbConfig = null
+        }
       }
     } else {
       const excludedFields = new Set([

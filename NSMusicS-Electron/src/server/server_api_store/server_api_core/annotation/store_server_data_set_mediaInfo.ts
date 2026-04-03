@@ -109,8 +109,8 @@ export const store_server_data_set_mediaInfo = reactive({
         store_server_user_model.token,
         store_server_user_model.salt,
         item_id,
-        '',
-        ''
+        String(Date.now()),
+        'true'
       )
     } else if (store_server_user_model.model_server_type_of_web) {
       if (store_server_users.server_select_kind === 'ninesong') {

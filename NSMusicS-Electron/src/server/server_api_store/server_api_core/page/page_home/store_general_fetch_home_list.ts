@@ -6,7 +6,7 @@ import { Get_LocalSqlite_HomeDataInfos } from '@/data/data_repository/app_reposi
 // @ts-ignore - 忽略模块导入类型检查
 import { store_server_user_model } from '@/server/server_management/store_server_user_model'
 // @ts-ignore - 忽略模块导入类型检查
-import { Get_Navidrome_Temp_Data_To_LocalSqlite } from '@/server/server_api/navidrome_api/services_web_instant_access/class_Get_Navidrome_Temp_Data_To_LocalSqlite'
+import { Get_Navidrome_Public_Data_To_LocalSqlite } from '@/server/server_api/navidrome_api/services_public_middleware/class_Get_Navidrome_Public_Data_To_LocalSqlite'
 // @ts-ignore - 忽略模块导入类型检查
 import { store_server_users } from '@/server/server_management/store_server_users'
 // @ts-ignore - 忽略模块导入类型检查
@@ -55,7 +55,7 @@ export const store_general_fetch_home_list = reactive({
           )
         } else if (store_server_users.server_select_kind === 'navidrome') {
           const get_Navidrome_Temp_Data_To_LocalSqlite =
-            new Get_Navidrome_Temp_Data_To_LocalSqlite()
+            new Get_Navidrome_Public_Data_To_LocalSqlite()
           await get_Navidrome_Temp_Data_To_LocalSqlite.get_home_list(
             store_server_users.server_config_of_current_user_of_sqlite?.url + '/rest',
             store_server_user_model.username,
@@ -98,7 +98,7 @@ export const store_general_fetch_home_list = reactive({
           )
         } else if (store_server_users.server_select_kind === 'navidrome') {
           const get_Navidrome_Temp_Data_To_LocalSqlite =
-            new Get_Navidrome_Temp_Data_To_LocalSqlite()
+            new Get_Navidrome_Public_Data_To_LocalSqlite()
           await get_Navidrome_Temp_Data_To_LocalSqlite.get_home_list_of_maximum_playback(
             store_server_users.server_config_of_current_user_of_sqlite?.url + '/rest',
             store_server_user_model.username,
@@ -138,7 +138,7 @@ export const store_general_fetch_home_list = reactive({
           )
         } else if (store_server_users.server_select_kind === 'navidrome') {
           const get_Navidrome_Temp_Data_To_LocalSqlite =
-            new Get_Navidrome_Temp_Data_To_LocalSqlite()
+            new Get_Navidrome_Public_Data_To_LocalSqlite()
           await get_Navidrome_Temp_Data_To_LocalSqlite.get_home_list_of_random_search(
             store_server_users.server_config_of_current_user_of_sqlite?.url + '/rest',
             store_server_user_model.username,
@@ -185,7 +185,7 @@ export const store_general_fetch_home_list = reactive({
           )
         } else if (store_server_users.server_select_kind === 'navidrome') {
           const get_Navidrome_Temp_Data_To_LocalSqlite =
-            new Get_Navidrome_Temp_Data_To_LocalSqlite()
+            new Get_Navidrome_Public_Data_To_LocalSqlite()
           await get_Navidrome_Temp_Data_To_LocalSqlite.get_home_list_of_recently_added(
             store_server_users.server_config_of_current_user_of_sqlite?.url + '/rest',
             store_server_user_model.username,
@@ -225,7 +225,7 @@ export const store_general_fetch_home_list = reactive({
           )
         } else if (store_server_users.server_select_kind === 'navidrome') {
           const get_Navidrome_Temp_Data_To_LocalSqlite =
-            new Get_Navidrome_Temp_Data_To_LocalSqlite()
+            new Get_Navidrome_Public_Data_To_LocalSqlite()
           await get_Navidrome_Temp_Data_To_LocalSqlite.get_home_list_of_recently_played(
             store_server_users.server_config_of_current_user_of_sqlite?.url + '/rest',
             store_server_user_model.username,

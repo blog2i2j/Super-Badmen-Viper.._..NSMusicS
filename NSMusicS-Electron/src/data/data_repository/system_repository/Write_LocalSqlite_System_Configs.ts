@@ -3,6 +3,34 @@ import { Player_Configs_of_Audio_Info } from '@/data/data_models/app_models/app_
 import { Player_Configs_of_UI } from '@/data/data_models/app_models/app_Configs/class_Player_Configs_of_UI'
 
 export class Write_LocalSqlite_System_Configs {
+  private getTableColumns(db: any, tableName: string): string[] {
+    try {
+      const rows = db.prepare(`PRAGMA table_info(${tableName})`).all()
+      return rows
+        .map((row: { name?: string }) => String(row?.name ?? '').trim())
+        .filter((name: string) => name.length > 0)
+    } catch (error) {
+      console.error(`Failed to read table columns for ${tableName}:`, error)
+      return []
+    }
+  }
+
+  private normalizeSqlValue(value: any) {
+    if (value == null) {
+      return ''
+    }
+    if (typeof value === 'object') {
+      if ('id' in value) {
+        return String(value.id ?? '')
+      }
+      return JSON.stringify(value)
+    }
+    if (typeof value === 'boolean') {
+      return value ? 1 : 0
+    }
+    return value
+  }
+
   system_app_config(db: any, app_Configs: App_Configs) {
     /// system_app_config
     db.exec('DELETE FROM system_app_config')
@@ -122,39 +150,40 @@ export class Write_LocalSqlite_System_Configs {
       'cue_track_count',
       'cue_track_show',
     ])
-    const filteredData = media_file_of_list.map((item) => {
-      return Object.keys(item)
-        .filter((key) => !excludedFields.has(key))
-        .reduce((obj: Record<string, any>, key) => {
-          obj[key] = item[key]
-          return obj
-        }, {})
-    })
-    if (filteredData.length === 0) {
+
+    if (!Array.isArray(media_file_of_list) || media_file_of_list.length === 0) {
       return
     }
-    const columns = Object.keys(filteredData[0]).join(', ')
-    const placeholders = filteredData
-      .map(() => `(${Array(Object.keys(filteredData[0]).length).fill('?').join(', ')})`)
-      .join(', ')
-    const values = filteredData.flatMap((item) =>
-      Object.values(item).map((value) => {
-        // 如果值是对象且有 id 字段，提取 id
-        if (typeof value === 'object' && value !== null && 'id' in value) {
-          return value.id
-        }
-        return String(value)
-      })
-    )
-    const sql = `
-            INSERT INTO server_media_file (${columns})
-            VALUES ${placeholders}
-        `
+
+    const tableColumns = this.getTableColumns(db, 'server_media_file')
+    if (tableColumns.length === 0) {
+      return
+    }
+
+    const columns = tableColumns.filter((column) => !excludedFields.has(column))
+    if (columns.length === 0) {
+      return
+    }
+
+    const quotedColumns = columns.map((column) => `"${column}"`).join(', ')
+    const placeholders = columns.map(() => '?').join(', ')
+
     try {
-      const stmt = db.prepare(sql)
-      stmt.run(...values) // 展开一维数组作为参数
+      const stmt = db.prepare(
+        `
+            INSERT INTO server_media_file (${quotedColumns})
+            VALUES (${placeholders})
+        `
+      )
+      const insertRows = db.transaction((rows: Record<string, any>[]) => {
+        rows.forEach((item) => {
+          const values = columns.map((column) => this.normalizeSqlValue(item?.[column]))
+          stmt.run(...values)
+        })
+      })
+      insertRows(media_file_of_list)
     } catch (error) {
-      console.error('Error inserting data:', error)
+      console.error('Error inserting playlist snapshot data:', error)
     }
   }
 }

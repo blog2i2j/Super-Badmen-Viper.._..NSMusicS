@@ -189,9 +189,7 @@ export const usePlaylistStore = defineStore('playlist', () => {
 
   // 监听器
   watch(
-    () => {
-      playlist_show
-    },
+    () => playlist_show.value,
     (newValue) => {
       if (newValue) {
         store_general_fetch_media_list._load_model = 'play'
@@ -209,7 +207,7 @@ export const usePlaylistStore = defineStore('playlist', () => {
   )
 
   watch(
-    () => playlist_MediaFiles_temporary,
+    () => playlist_MediaFiles_temporary.value,
     async () => {
       reset_carousel()
       store_system_configs_save.save_system_playlist_item_id_config()
@@ -218,7 +216,7 @@ export const usePlaylistStore = defineStore('playlist', () => {
   )
 
   watch(
-    () => playlist_MediaFiles_temporary_Sort_Items,
+    () => playlist_MediaFiles_temporary_Sort_Items.value,
     async () => {
       store_system_configs_save.save_system_playlist_item_id_config()
     },

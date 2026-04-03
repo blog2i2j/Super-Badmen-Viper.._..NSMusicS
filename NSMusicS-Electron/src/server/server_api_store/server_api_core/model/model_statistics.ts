@@ -4,7 +4,7 @@ import { usePageAlbumStore } from '@/data/data_status/page_status/album_store/us
 import { usePageArtistStore } from '@/data/data_status/page_status/artist_store/usePageArtistStore'
 import { store_system_configs_info } from '@/data/data_stores/local_system_stores/store_system_configs_info'
 import { store_server_user_model } from '@/server/server_management/store_server_user_model'
-import { Get_Navidrome_Temp_Data_To_LocalSqlite } from '@/server/server_api/navidrome_api/services_web_instant_access/class_Get_Navidrome_Temp_Data_To_LocalSqlite'
+import { Get_Navidrome_Public_Data_To_LocalSqlite } from '@/server/server_api/navidrome_api/services_public_middleware/class_Get_Navidrome_Public_Data_To_LocalSqlite'
 import { store_server_users } from '@/server/server_management/store_server_users'
 import { ipcRenderer, isElectron } from '@/utils/electron/isElectron'
 import { Get_Jellyfin_Temp_Data_To_LocalSqlite } from '@/server/server_api/jellyfin_api/services_web_instant_access/class_Get_Jellyfin_Temp_Data_To_LocalSqlite'
@@ -200,7 +200,7 @@ export const store_server_model_statistics = reactive({
           await get_NineSong_Temp_Data_To_LocalSqlite.get_count_of_playlist()
         } else if (store_server_users.server_select_kind === 'navidrome') {
           const get_Navidrome_Temp_Data_To_LocalSqlite =
-            new Get_Navidrome_Temp_Data_To_LocalSqlite()
+            new Get_Navidrome_Public_Data_To_LocalSqlite()
           await get_Navidrome_Temp_Data_To_LocalSqlite.get_count_of_media_file(
             store_server_users.server_config_of_current_user_of_sqlite?.url + '/rest',
             store_server_user_model.username,

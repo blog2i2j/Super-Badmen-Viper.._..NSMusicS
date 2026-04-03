@@ -38,6 +38,9 @@ export class Media_Annotation_ApiService_of_ND extends Navidrome_Api_Services_No
     time: string,
     submission: string
   ): Promise<any> {
-    return this.sendRequest(username, token, salt, 'scrobble', { id, time, submission })
+    const params: Record<string, string> = { id }
+    if (time.trim()) params.time = time
+    if (submission.trim()) params.submission = submission
+    return this.sendRequest(username, token, salt, 'scrobble', params)
   }
 }

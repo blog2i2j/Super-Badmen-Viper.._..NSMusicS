@@ -2,7 +2,7 @@ import { Navidrome_Api_Services_Normal } from '../Navidrome_Api_Services_Normal'
 
 export class Playlists_ApiService_of_ND extends Navidrome_Api_Services_Normal {
   public async getPlaylists_all(username: string, token: string, salt: string): Promise<any> {
-    return this.sendRequest(username, token, salt, 'getPlaylists')
+    return this.sendRequest(username, token, salt, 'getPlaylists.view')
   }
   public async getPlaylist_id(
     username: string,
@@ -10,7 +10,7 @@ export class Playlists_ApiService_of_ND extends Navidrome_Api_Services_Normal {
     salt: string,
     id: string
   ): Promise<any> {
-    return this.sendRequest(username, token, salt, 'getPlaylist', { id })
+    return this.sendRequest(username, token, salt, 'getPlaylist.view', { id })
   }
 
   public async createPlaylist_set(
@@ -19,7 +19,7 @@ export class Playlists_ApiService_of_ND extends Navidrome_Api_Services_Normal {
     salt: string,
     name: string
   ): Promise<any> {
-    return this.sendRequest(username, token, salt, 'createPlaylist', {
+    return this.sendRequest(username, token, salt, 'createPlaylist.view', {
       name,
     })
   }
@@ -32,7 +32,7 @@ export class Playlists_ApiService_of_ND extends Navidrome_Api_Services_Normal {
     comment: string,
     isPublic: string
   ): Promise<any> {
-    return this.sendRequest(username, token, salt, 'updatePlaylist', {
+    return this.sendRequest(username, token, salt, 'updatePlaylist.view', {
       playlistId,
       name,
       comment,
@@ -46,7 +46,7 @@ export class Playlists_ApiService_of_ND extends Navidrome_Api_Services_Normal {
     playlistId: string,
     songIdToAdd: string
   ): Promise<any> {
-    return this.sendRequest(username, token, salt, 'updatePlaylist', {
+    return this.sendRequest(username, token, salt, 'updatePlaylist.view', {
       playlistId,
       songIdToAdd,
     })
@@ -58,7 +58,7 @@ export class Playlists_ApiService_of_ND extends Navidrome_Api_Services_Normal {
     playlistId: string,
     songIndexToRemove: string
   ): Promise<any> {
-    return this.sendRequest(username, token, salt, 'updatePlaylist', {
+    return this.sendRequest(username, token, salt, 'updatePlaylist.view', {
       playlistId,
       songIndexToRemove,
     })
@@ -69,6 +69,6 @@ export class Playlists_ApiService_of_ND extends Navidrome_Api_Services_Normal {
     salt: string,
     id: string
   ): Promise<any> {
-    return this.sendRequest(username, token, salt, 'deletePlaylist', { id })
+    return this.sendRequest(username, token, salt, 'deletePlaylist.view', { id })
   }
 }

@@ -777,7 +777,7 @@ async function Play_Media_Order(model_num: string, increased: number) {
               )
             } else if (store_server_users.server_select_kind === 'navidrome') {
               let get_Navidrome_Temp_Data_To_LocalSqlite =
-                new Get_Navidrome_Temp_Data_To_LocalSqlite()
+                new Get_Navidrome_Public_Data_To_LocalSqlite()
               await get_Navidrome_Temp_Data_To_LocalSqlite.get_random_song_list(
                 store_server_users.server_config_of_current_user_of_sqlite?.url + '/rest',
                 store_server_user_model.username,
@@ -843,7 +843,7 @@ async function begin_random_play_model() {
       '30'
     )
   } else if (store_server_users.server_select_kind === 'navidrome') {
-    let get_Navidrome_Temp_Data_To_LocalSqlite = new Get_Navidrome_Temp_Data_To_LocalSqlite()
+    let get_Navidrome_Temp_Data_To_LocalSqlite = new Get_Navidrome_Public_Data_To_LocalSqlite()
     await get_Navidrome_Temp_Data_To_LocalSqlite.get_random_song_list(
       store_server_users.server_config_of_current_user_of_sqlite?.url + '/rest',
       store_server_user_model.username,
@@ -1268,7 +1268,7 @@ import { Audio_node_mpv } from '@/data/data_models/app_models/song_Audio_Out/Aud
 import { usePagePlayerTagModifyStore } from '@/data/data_status/page_status/player_store/usePagePlayerTagModifyStore'
 const playerTagModifyStore = usePagePlayerTagModifyStore()
 import { Get_LocalSqlite_AnnotationInfo } from '@/data/data_repository/app_repository/LocalSqlite_Get_AnnotationInfo'
-import { Get_Navidrome_Temp_Data_To_LocalSqlite } from '@/server/server_api/navidrome_api/services_web_instant_access/class_Get_Navidrome_Temp_Data_To_LocalSqlite'
+import { Get_Navidrome_Public_Data_To_LocalSqlite } from '@/server/server_api/navidrome_api/services_public_middleware/class_Get_Navidrome_Public_Data_To_LocalSqlite'
 import { store_server_users } from '@/server/server_management/store_server_users'
 import { store_general_fetch_media_list } from '@/server/server_api_store/server_api_core/page/page_media_file/store_general_fetch_media_list'
 import { Get_NineSong_Temp_Data_To_LocalSqlite } from '@/server/server_api/ninesong_api/services_web_instant_access/class_Get_NineSong_Temp_Data_To_LocalSqlite'

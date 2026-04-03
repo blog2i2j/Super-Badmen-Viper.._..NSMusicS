@@ -75,6 +75,11 @@ export class Get_LocalSqlite_PlaylistInfo {
       db.pragma('journal_mode = WAL')
       db.exec('PRAGMA foreign_keys = OFF')
 
+      if (!Array.isArray(list_of_media_file_id) || list_of_media_file_id.length === 0) {
+        db.close()
+        return []
+      }
+
       db.exec(`ATTACH DATABASE '${store_system_configs_info.nsmusics_db}' AS nsmusics`)
       const placeholders = list_of_media_file_id.map(() => '?').join(',')
       const stmt = db.prepare(`
@@ -151,7 +156,7 @@ export class Get_LocalSqlite_PlaylistInfo {
       db.pragma('journal_mode = WAL')
       db.exec('PRAGMA foreign_keys = OFF')
 
-      const stmt = db.prepare(`SELECT *FROM ${store_server_user_model.media_file}`)
+      const stmt = db.prepare(`SELECT * FROM ${store_server_user_model.media_file} ORDER BY rowid`)
       const rows = stmt.all()
       const result: Media_File[] = []
       rows.forEach((row: any, index: number) => {
