@@ -1099,6 +1099,17 @@ async function initNodeMpv() {
       verbose: true,
     })
   } else if (process.platform === 'linux') {
+    const linuxMpvBinary =
+      process.env.NSMUSICS_MPV_BINARY && process.env.NSMUSICS_MPV_BINARY.trim().length > 0
+        ? process.env.NSMUSICS_MPV_BINARY.trim()
+        : 'mpv'
+    mpv = new mpvAPI({
+      audio_only: true,
+      auto_restart: true,
+      binary: linuxMpvBinary,
+      debug: true,
+      verbose: true,
+    })
   }
   if (mpv != undefined) {
     await mpv.start()

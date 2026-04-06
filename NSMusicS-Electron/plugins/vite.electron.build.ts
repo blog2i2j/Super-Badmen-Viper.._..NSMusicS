@@ -88,6 +88,7 @@ export const viteElectronBuild = (): Plugin => {
             desktop: {
               Icon: '/usr/share/icons/hicolor/512x512/apps/nsmusics.png',
             },
+            depends: ['mpv'],
             category: 'Audio',
             maintainer: 'Xiang Cheng 1774148579@qq.com',
             artifactName: '${productName}-Linux-${version}-${arch}.${ext}',
