@@ -1105,6 +1105,8 @@ jobs:
         run: node .github/workflows/.tmp/validate-packaged-native.cjs preflight
 
       - name: Build renderer bundle
+        env:
+          NODE_OPTIONS: --max-old-space-size=6144
         run: |
           $diagnosticsDir = '.github/workflows/.tmp/diagnostics'
           New-Item -ItemType Directory -Path $diagnosticsDir -Force | Out-Null
