@@ -69,7 +69,7 @@ jobs:
               runner: 'windows-latest',
               supported: true,
               support_reason:
-                'Repository currently has a valid Windows x64 mpv runtime path and asset.',
+                'The workflow installs a Windows x64 mpv runtime and stages it into the packaged resources path expected by src/background.ts.',
             },
             {
               platform: 'win',
@@ -96,40 +96,40 @@ jobs:
               platform_name: 'linux',
               electron_platform: 'linux',
               arch: 'x64',
-              runner: 'ubuntu-latest',
+              runner: 'ubuntu-24.04',
               supported: true,
               support_reason:
-                'src/background.ts resolves Linux mpv from NSMUSICS_MPV_BINARY or system PATH, and the workflow installs and validates a system mpv runtime on ubuntu-latest.',
+                'src/background.ts resolves Linux mpv from NSMUSICS_MPV_BINARY or system PATH, and the workflow installs and validates a system mpv runtime on ubuntu-24.04.',
             },
             {
               platform: 'linux',
               platform_name: 'linux',
               electron_platform: 'linux',
               arch: 'arm64',
-              runner: 'ubuntu-latest',
-              supported: false,
+              runner: 'ubuntu-24.04-arm',
+              supported: true,
               support_reason:
-                'Linux arm64 remains unsupported because this workflow runs on hosted x64 runners and does not provide a strict native arm64 rebuild and validation path for Electron native modules.',
+                'The workflow uses a native Ubuntu arm64 runner, installs system mpv, and rebuilds Electron native modules for Linux arm64.',
             },
             {
               platform: 'mac',
               platform_name: 'macos',
               electron_platform: 'darwin',
               arch: 'x64',
-              runner: 'macos-latest',
-              supported: false,
+              runner: 'macos-15-intel',
+              supported: true,
               support_reason:
-                'src/background.ts expects resources/mpv-0.39.0/mpv.app/Contents/MacOS/mpv, but that runtime is absent from the repository.',
+                'The workflow installs a macOS mpv.app runtime on an Intel runner and stages it into the packaged resources path expected by src/background.ts.',
             },
             {
               platform: 'mac',
               platform_name: 'macos',
               electron_platform: 'darwin',
               arch: 'arm64',
-              runner: 'macos-latest',
-              supported: false,
+              runner: 'macos-15',
+              supported: true,
               support_reason:
-                'src/background.ts expects resources/mpv-0.39.0/mpv.app/Contents/MacOS/mpv, but that runtime is absent from the repository.',
+                'The workflow installs a macOS mpv.app runtime on an Apple Silicon runner and stages it into the packaged resources path expected by src/background.ts.',
             },
           ]
 
@@ -168,7 +168,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Verify deterministic dependency lockfile
         working-directory: NSMusicS-Electron
@@ -206,10 +206,10 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
@@ -244,6 +244,105 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y build-essential python3 ruby ruby-dev rpm fakeroot libarchive-tools mpv
           sudo gem install --no-document fpm
+
+      - name: Provision Windows mpv runtime
+        if: runner.os == 'Windows'
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $packages = @('mpvio.portable', 'mpvio.install', 'mpv.install', 'mpv')
+          $installedPackage = $null
+          foreach ($package in $packages) {
+            try {
+              choco install $package -y --no-progress
+              $installedPackage = $package
+              break
+            } catch {
+              Write-Host "Chocolatey package failed: $package"
+            }
+          }
+          if (-not $installedPackage) {
+            throw 'Unable to install an mpv Chocolatey package for Windows packaging.'
+          }
+
+          $candidateRoots = @()
+          if ($env:ChocolateyInstall) {
+            $candidateRoots += (Join-Path $env:ChocolateyInstall 'lib')
+          }
+          $candidateRoots += 'C:\ProgramData\chocolatey\lib'
+
+          $mpvCandidates = foreach ($root in ($candidateRoots | Select-Object -Unique)) {
+            if (Test-Path $root) {
+              Get-ChildItem -Path $root -Filter mpv.exe -File -Recurse -ErrorAction SilentlyContinue
+            }
+          }
+
+          $mpvBinary = $mpvCandidates |
+            Where-Object { $_.FullName -notmatch '\\bin\\' } |
+            Sort-Object FullName |
+            Select-Object -First 1
+
+          if (-not $mpvBinary) {
+            $command = Get-Command mpv.exe -ErrorAction SilentlyContinue
+            if ($command) {
+              $mpvBinary = Get-Item $command.Source
+            }
+          }
+
+          if (-not $mpvBinary) {
+            throw 'Unable to locate mpv.exe after Chocolatey installation.'
+          }
+
+          $sourceDir = Split-Path $mpvBinary.FullName -Parent
+          $targetDir = Join-Path $PWD 'resources\mpv-x86_64-20241124'
+          if (Test-Path $targetDir) {
+            Remove-Item -LiteralPath $targetDir -Recurse -Force
+          }
+          New-Item -ItemType Directory -Path $targetDir -Force | Out-Null
+          Get-ChildItem -LiteralPath $sourceDir -Force | ForEach-Object {
+            Copy-Item -LiteralPath $_.FullName -Destination $targetDir -Recurse -Force
+          }
+
+          $preparedBinary = Join-Path $targetDir 'mpv.exe'
+          if (-not (Test-Path $preparedBinary)) {
+            throw "Prepared Windows mpv runtime missing mpv.exe at $preparedBinary"
+          }
+
+          Write-Host "Prepared Windows mpv runtime from: $sourceDir"
+          Get-ChildItem -LiteralPath $targetDir -Force
+
+      - name: Provision macOS mpv runtime
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! brew list --cask stolendata-mpv >/dev/null 2>&1; then
+            brew install --cask stolendata-mpv || brew install --cask mpv
+          fi
+
+          APP_PATH=""
+          for candidate in /Applications/mpv.app "$HOME/Applications/mpv.app"; do
+            if [ -d "$candidate" ]; then
+              APP_PATH="$candidate"
+              break
+            fi
+          done
+
+          if [ -z "$APP_PATH" ]; then
+            APP_PATH="$(find /Applications "$HOME/Applications" -maxdepth 1 -type d -name 'mpv.app' 2>/dev/null | head -n 1 || true)"
+          fi
+
+          if [ -z "$APP_PATH" ]; then
+            echo "Unable to locate mpv.app after Homebrew cask installation." >&2
+            exit 1
+          fi
+
+          TARGET_DIR="$PWD/resources/mpv-0.39.0"
+          rm -rf "$TARGET_DIR"
+          mkdir -p "$TARGET_DIR"
+          cp -R "$APP_PATH" "$TARGET_DIR/mpv.app"
+          test -f "$TARGET_DIR/mpv.app/Contents/MacOS/mpv"
+          file "$TARGET_DIR/mpv.app/Contents/MacOS/mpv" || true
+          echo "Prepared macOS mpv runtime from: $APP_PATH"
 
       - name: Prepare CI helper files
         run: |
@@ -335,7 +434,12 @@ jobs:
             throw new Error(`Unsupported NSMUSICS_ELECTRON_PLATFORM: ${platformName}`)
           }
 
-          const requestedTargets = mode === 'dir' ? targetMap.dir : targetMap[platformName]
+          const requestedTargets =
+            mode === 'dir'
+              ? targetMap.dir
+              : platformName === 'linux' && archName === 'arm64'
+                ? ['deb']
+                : targetMap[platformName]
           const targets = builderPlatform.createTarget(requestedTargets, builderArch)
 
           console.log(
@@ -685,14 +789,14 @@ jobs:
             if (platformName === 'win') {
               ensureExists(
                 path.join(rootDir, 'resources', 'mpv-x86_64-20241124', 'mpv.exe'),
-                'Repository Windows mpv runtime'
+                'Prepared Windows mpv runtime'
               )
               if (archName !== 'x64') {
                 fail(
-                  `Repository support audit failed for ${platformName}-${archName}: src/background.ts hardcodes resources/mpv-x86_64-20241124/mpv.exe and the repository only ships an x64 Windows mpv runtime.`
+                  `Repository support audit failed for ${platformName}-${archName}: src/background.ts hardcodes resources/mpv-x86_64-20241124/mpv.exe and the workflow only provisions an x64 Windows mpv runtime.`
                 )
               }
-              appendSummary(`- PASS Windows repository runtime is consistent with ${archName}.`)
+              appendSummary(`- PASS Windows source path contract is consistent with the prepared CI mpv runtime for ${archName}.`)
               note(`Repository compatibility audit passed for ${platformName}-${archName}`)
               return
             }
@@ -709,10 +813,10 @@ jobs:
               )
               if (!fs.existsSync(macMpvPath)) {
                 fail(
-                  `Repository support audit failed for ${platformName}-${archName}: src/background.ts expects resources/mpv-0.39.0/mpv.app/Contents/MacOS/mpv but that runtime is missing from the repository.`
+                  `Repository support audit failed for ${platformName}-${archName}: src/background.ts expects resources/mpv-0.39.0/mpv.app/Contents/MacOS/mpv but the workflow did not prepare that runtime.`
                 )
               }
-              appendSummary(`- PASS macOS repository runtime exists for ${archName}.`)
+              appendSummary(`- PASS macOS source path contract is consistent with the prepared CI mpv.app runtime for ${archName}.`)
               note(`Repository compatibility audit passed for ${platformName}-${archName}`)
               return
             }
