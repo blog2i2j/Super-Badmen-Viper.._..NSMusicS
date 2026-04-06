@@ -1077,6 +1077,16 @@ jobs:
           NSMUSICS_ELECTRON_ARCH: ${{ matrix.arch }}
         run: node .github/workflows/.tmp/ensure-platform-frontend-packages.cjs
 
+      - name: Record frontend dependency inventory
+        run: |
+          $diagnosticsDir = '.github/workflows/.tmp/diagnostics'
+          New-Item -ItemType Directory -Path $diagnosticsDir -Force | Out-Null
+          $logPath = Join-Path $diagnosticsDir 'frontend-dependency-inventory.log'
+          npm ls --depth=0 vite esbuild rollup lightningcss @tailwindcss/vite @tailwindcss/oxide *>&1 | Tee-Object -FilePath $logPath
+          if ($LASTEXITCODE -ne 0) {
+            exit $LASTEXITCODE
+          }
+
       - name: Clean previous release output
         run: |
           node -e "const fs=require('fs'); for (const dir of ['dist', 'release']) fs.rmSync(dir, { recursive: true, force: true });"
@@ -1095,7 +1105,14 @@ jobs:
         run: node .github/workflows/.tmp/validate-packaged-native.cjs preflight
 
       - name: Build renderer bundle
-        run: npx vite build --config .github/workflows/.tmp/vite.ci.config.mjs
+        run: |
+          $diagnosticsDir = '.github/workflows/.tmp/diagnostics'
+          New-Item -ItemType Directory -Path $diagnosticsDir -Force | Out-Null
+          $logPath = Join-Path $diagnosticsDir 'vite-build.log'
+          npx vite build --config .github/workflows/.tmp/vite.ci.config.mjs *>&1 | Tee-Object -FilePath $logPath
+          if ($LASTEXITCODE -ne 0) {
+            exit $LASTEXITCODE
+          }
 
       - name: Build Electron main process bundle
         run: |
@@ -1166,6 +1183,20 @@ jobs:
           if-no-files-found: error
           compression-level: 0
           retention-days: 21
+
+      - name: Upload failure diagnostics
+        if: ${{ failure() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.ARTIFACT_PREFIX }}-failure-${{ env.BUILD_MODE }}-${{ matrix.platform_name }}-${{ matrix.arch }}
+          path: |
+            NSMusicS-Electron/.github/workflows/.tmp/diagnostics/**
+            NSMusicS-Electron/release/**/*.log
+            NSMusicS-Electron/release/**/builder-debug.yml
+            NSMusicS-Electron/release/**/builder-effective-config.yaml
+          if-no-files-found: warn
+          compression-level: 0
+          retention-days: 14
 
   report:
     name: Build Report
