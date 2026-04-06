@@ -109,7 +109,7 @@ jobs:
               runner: 'ubuntu-24.04-arm',
               supported: true,
               support_reason:
-                'The workflow uses a native Ubuntu arm64 runner, installs system mpv, and rebuilds Electron native modules for Linux arm64.',
+                'The workflow uses a native Ubuntu arm64 runner, installs system mpv, rebuilds Electron native modules, and publishes a Linux arm64 tar.gz package.',
             },
             {
               platform: 'mac',
@@ -119,7 +119,7 @@ jobs:
               runner: 'macos-15-intel',
               supported: true,
               support_reason:
-                'The workflow installs a macOS mpv.app runtime on an Intel runner and stages it into the packaged resources path expected by src/background.ts.',
+                'The workflow downloads a pinned macOS Intel mpv.app runtime and stages it into the packaged resources path expected by src/background.ts.',
             },
             {
               platform: 'mac',
@@ -129,7 +129,7 @@ jobs:
               runner: 'macos-15',
               supported: true,
               support_reason:
-                'The workflow installs a macOS mpv.app runtime on an Apple Silicon runner and stages it into the packaged resources path expected by src/background.ts.',
+                'The workflow downloads a pinned macOS Apple Silicon mpv.app runtime and stages it into the packaged resources path expected by src/background.ts.',
             },
           ]
 
@@ -315,24 +315,32 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if ! brew list --cask stolendata-mpv >/dev/null 2>&1; then
-            brew install --cask stolendata-mpv || brew install --cask mpv
-          fi
+          case "${{ matrix.arch }}" in
+            arm64)
+              MPV_URL="https://laboratory.stolendata.net/~djinn/mpv_osx/mpv-arm64-0.39.0.tar.gz"
+              MPV_SHA256="9c81c5cf2e756cf9c2fef97a00627140ea7c6b46079469ce3b1a13b4cd4f5b2b"
+              ;;
+            x64)
+              MPV_URL="https://laboratory.stolendata.net/~djinn/mpv_osx/mpv-0.39.0.tar.gz"
+              MPV_SHA256="35ec81ad86a97b24956a8d0f4fa1ba2690b44ae7741c920e923620bcd7bd402a"
+              ;;
+            *)
+              echo "Unsupported macOS architecture for mpv provisioning: ${{ matrix.arch }}" >&2
+              exit 1
+              ;;
+          esac
 
-          APP_PATH=""
-          for candidate in /Applications/mpv.app "$HOME/Applications/mpv.app"; do
-            if [ -d "$candidate" ]; then
-              APP_PATH="$candidate"
-              break
-            fi
-          done
+          ARCHIVE_PATH="$RUNNER_TEMP/mpv-${{ matrix.arch }}.tar.gz"
+          EXTRACT_DIR="$RUNNER_TEMP/mpv-extract-${{ matrix.arch }}"
+          rm -rf "$EXTRACT_DIR"
+          mkdir -p "$EXTRACT_DIR"
+          curl -L --fail "$MPV_URL" -o "$ARCHIVE_PATH"
+          echo "$MPV_SHA256  $ARCHIVE_PATH" | shasum -a 256 -c -
+          tar -xzf "$ARCHIVE_PATH" -C "$EXTRACT_DIR"
 
+          APP_PATH="$(find "$EXTRACT_DIR" -maxdepth 2 -type d -name 'mpv.app' | head -n 1 || true)"
           if [ -z "$APP_PATH" ]; then
-            APP_PATH="$(find /Applications "$HOME/Applications" -maxdepth 1 -type d -name 'mpv.app' 2>/dev/null | head -n 1 || true)"
-          fi
-
-          if [ -z "$APP_PATH" ]; then
-            echo "Unable to locate mpv.app after Homebrew cask installation." >&2
+            echo "Unable to locate mpv.app after extracting $MPV_URL" >&2
             exit 1
           fi
 
@@ -342,7 +350,7 @@ jobs:
           cp -R "$APP_PATH" "$TARGET_DIR/mpv.app"
           test -f "$TARGET_DIR/mpv.app/Contents/MacOS/mpv"
           file "$TARGET_DIR/mpv.app/Contents/MacOS/mpv" || true
-          echo "Prepared macOS mpv runtime from: $APP_PATH"
+          echo "Prepared macOS mpv runtime from: $MPV_URL"
 
       - name: Prepare CI helper files
         run: |
@@ -397,6 +405,101 @@ jobs:
           '@ | Set-Content -Path .github/workflows/.tmp/vite.ci.config.mjs -Encoding utf8
 
           @'
+          const childProcess = require('node:child_process')
+          const path = require('node:path')
+
+          const platformName = process.env.NSMUSICS_ELECTRON_PLATFORM
+          const archName = process.env.NSMUSICS_ELECTRON_ARCH
+
+          const packageSets = {
+            'win:x64': [
+              '@esbuild/win32-x64',
+              '@rollup/rollup-win32-x64-msvc',
+              '@tailwindcss/oxide-win32-x64-msvc',
+              'lightningcss-win32-x64-msvc',
+            ],
+            'win:arm64': [
+              '@esbuild/win32-arm64',
+              '@rollup/rollup-win32-arm64-msvc',
+              '@tailwindcss/oxide-win32-arm64-msvc',
+              'lightningcss-win32-arm64-msvc',
+            ],
+            'win:ia32': [
+              '@esbuild/win32-ia32',
+            ],
+            'linux:x64': [
+              '@esbuild/linux-x64',
+              '@rollup/rollup-linux-x64-gnu',
+              '@tailwindcss/oxide-linux-x64-gnu',
+              'lightningcss-linux-x64-gnu',
+            ],
+            'linux:arm64': [
+              '@esbuild/linux-arm64',
+              '@rollup/rollup-linux-arm64-gnu',
+              '@tailwindcss/oxide-linux-arm64-gnu',
+              'lightningcss-linux-arm64-gnu',
+            ],
+            'mac:x64': [
+              '@esbuild/darwin-x64',
+              '@rollup/rollup-darwin-x64',
+              '@tailwindcss/oxide-darwin-x64',
+              'lightningcss-darwin-x64',
+            ],
+            'mac:arm64': [
+              '@esbuild/darwin-arm64',
+              '@rollup/rollup-darwin-arm64',
+              '@tailwindcss/oxide-darwin-arm64',
+              'lightningcss-darwin-arm64',
+            ],
+          }
+
+          const key = `${platformName}:${archName}`
+          const requiredPackages = packageSets[key] || []
+
+          const missingPackages = requiredPackages.filter((packageName) => {
+            try {
+              require.resolve(packageName, { paths: [process.cwd()] })
+              return false
+            } catch {
+              return true
+            }
+          })
+
+          console.log(
+            JSON.stringify(
+              {
+                platformName,
+                archName,
+                requiredPackages,
+                missingPackages,
+              },
+              null,
+              2
+            )
+          )
+
+          if (missingPackages.length > 0) {
+            const npmCommand = process.platform === 'win32' ? 'npm.cmd' : 'npm'
+            const install = childProcess.spawnSync(
+              npmCommand,
+              ['install', '--no-save', '--package-lock=false', '--no-audit', '--no-fund', ...missingPackages],
+              {
+                stdio: 'inherit',
+                cwd: process.cwd(),
+                env: process.env,
+              }
+            )
+            if (install.status !== 0) {
+              throw new Error(`Failed to install missing frontend native packages for ${key}`)
+            }
+          }
+
+          for (const packageName of requiredPackages) {
+            require.resolve(packageName, { paths: [process.cwd()] })
+          }
+          '@ | Set-Content -Path .github/workflows/.tmp/ensure-platform-frontend-packages.cjs -Encoding utf8
+
+          @'
           const electronBuilder = require('electron-builder')
           const path = require('node:path')
 
@@ -438,7 +541,7 @@ jobs:
             mode === 'dir'
               ? targetMap.dir
               : platformName === 'linux' && archName === 'arm64'
-                ? ['deb']
+                ? ['tar.gz']
                 : targetMap[platformName]
           const targets = builderPlatform.createTarget(requestedTargets, builderArch)
 
@@ -968,7 +1071,13 @@ jobs:
         run: node .github/workflows/.tmp/validate-packaged-native.cjs repo-audit
 
       - name: Install project dependencies
-        run: npm ci --no-audit --no-fund
+        run: npm ci --include=optional --no-audit --no-fund
+
+      - name: Ensure platform frontend native packages
+        env:
+          NSMUSICS_ELECTRON_PLATFORM: ${{ matrix.platform }}
+          NSMUSICS_ELECTRON_ARCH: ${{ matrix.arch }}
+        run: node .github/workflows/.tmp/ensure-platform-frontend-packages.cjs
 
       - name: Clean previous release output
         run: |
