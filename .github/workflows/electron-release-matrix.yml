@@ -874,6 +874,18 @@ jobs:
             fail(`release output is empty under ${releaseDir}`)
           }
           const rootFiles = releaseFiles.filter((targetPath) => path.dirname(targetPath) === releaseDir)
+          const rootEntries = fs
+            .readdirSync(releaseDir, { withFileTypes: true })
+            .map((entry) => (entry.isDirectory() ? `${entry.name}/` : entry.name))
+            .sort()
+          const packageLikeFiles = releaseFiles
+            .filter((targetPath) =>
+              /(\.AppImage|\.deb|\.tar\.gz|\.zip|\.dmg|\.dmg\.blockmap|\.exe|\.exe\.blockmap)$/i.test(
+                fileBasename(targetPath)
+              )
+            )
+            .map(relativeToRoot)
+            .sort()
 
           fs.rmSync(bundleRoot, { recursive: true, force: true })
           fs.mkdirSync(publishDir, { recursive: true })
@@ -888,7 +900,7 @@ jobs:
               fail(
                 `Expected exactly one ${platformLabel}-${archName} ${assetSpec.kind} asset, found ${matches.length}. Candidates: ${matches
                   .map((targetPath) => relativeToRoot(targetPath))
-                  .join(', ')}`
+                  .join(', ')}. Root entries: ${rootEntries.join(', ')}. Package-like files: ${packageLikeFiles.join(', ')}`
               )
             }
 
