@@ -537,6 +537,7 @@ jobs:
 
           @'
           const electronBuilder = require('electron-builder')
+          const fs = require('node:fs')
           const path = require('node:path')
 
           const platformName = process.env.NSMUSICS_ELECTRON_PLATFORM
@@ -584,6 +585,12 @@ jobs:
                 ? targetOverride
                 : targetMap[platformName]
           const targets = builderPlatform.createTarget(requestedTargets, builderArch)
+          const diagnosticsDir = path.join(process.cwd(), '.github', 'workflows', '.tmp', 'diagnostics')
+          const safeTargetKey = requestedTargets.join('_').replace(/[^a-zA-Z0-9._-]+/g, '_') || 'default'
+          const buildReportPath = path.join(
+            diagnosticsDir,
+            `electron-builder-${platformName}-${archName}-${mode}-${safeTargetKey}.json`
+          )
 
           const baseConfig = {
             appId: 'github.com.nsmusics.xiang.cheng',
@@ -659,6 +666,26 @@ jobs:
                 }),
           }
 
+          const walkFiles = (dirPath) => {
+            if (!fs.existsSync(dirPath)) {
+              return []
+            }
+
+            return fs.readdirSync(dirPath, { withFileTypes: true }).flatMap((entry) => {
+              const fullPath = path.join(dirPath, entry.name)
+              return entry.isDirectory() ? walkFiles(fullPath) : [fullPath]
+            })
+          }
+
+          const expectedArtifactMatchers = {
+            nsis: (value) => value.endsWith('.exe') && !value.endsWith('.exe.blockmap'),
+            zip: (value) => value.endsWith('.zip'),
+            AppImage: (value) => value.endsWith('.AppImage'),
+            deb: (value) => value.endsWith('.deb'),
+            'tar.gz': (value) => value.endsWith('.tar.gz'),
+            dmg: (value) => value.endsWith('.dmg') && !value.endsWith('.dmg.blockmap'),
+          }
+
           console.log(
             `[ci-electron-builder] mode=${mode} platform=${platformName} arch=${archName} targets=${requestedTargets.join(',')}`
           )
@@ -680,24 +707,83 @@ jobs:
             )
           )
 
-          electronBuilder
-            .build({
+          async function main() {
+            fs.mkdirSync(diagnosticsDir, { recursive: true })
+
+            const artifactPaths = (await electronBuilder.build({
               publish: 'never',
               targets,
               config: builderConfig,
-            })
-            .catch((error) => {
-              const errorText = (error && (error.stack || error.message)) || String(error)
-              const commandSafe = errorText
-                .replace(/%/g, '%25')
-                .replace(/\r/g, '%0D')
-                .replace(/\n/g, '%0A')
-              console.error(
-                `::error title=Electron Builder ${platformName}-${archName} ${mode}::${commandSafe}`
+            })).map((targetPath) => path.resolve(targetPath))
+
+            const releaseDir = path.join(process.cwd(), 'release')
+            const releaseFiles = walkFiles(releaseDir).map((targetPath) => path.resolve(targetPath))
+
+            const missingRequestedTargets =
+              mode === 'dir'
+                ? []
+                : requestedTargets.filter((target) => {
+                    const matcher = expectedArtifactMatchers[target]
+                    if (!matcher) {
+                      throw new Error(`No expected artifact matcher configured for target: ${target}`)
+                    }
+
+                    return !artifactPaths.some((targetPath) => matcher(path.basename(targetPath)))
+                  })
+
+            const buildReport = {
+              mode,
+              platformName,
+              archName,
+              targetOverride,
+              requestedTargets,
+              configuredTargets: {
+                win: builderConfig.win.target || null,
+                linux: builderConfig.linux.target || null,
+                mac: builderConfig.mac.target || null,
+              },
+              artifactPaths,
+              releaseFiles,
+              missingRequestedTargets,
+            }
+
+            fs.writeFileSync(buildReportPath, JSON.stringify(buildReport, null, 2) + '\n')
+            console.log(`[ci-electron-builder] wrote build report: ${buildReportPath}`)
+            console.log(
+              JSON.stringify(
+                {
+                  artifactPaths,
+                  releaseFiles,
+                  missingRequestedTargets,
+                },
+                null,
+                2
               )
-              console.error(error)
-              process.exit(1)
-            })
+            )
+
+            if (missingRequestedTargets.length > 0) {
+              throw new Error(
+                `electron-builder completed without requested target artifacts for ${missingRequestedTargets.join(
+                  ', '
+                )}. Returned artifacts: ${artifactPaths.join(', ') || '(none)'}. Release files: ${
+                  releaseFiles.join(', ') || '(none)'
+                }`
+              )
+            }
+          }
+
+          main().catch((error) => {
+            const errorText = (error && (error.stack || error.message)) || String(error)
+            const commandSafe = errorText
+              .replace(/%/g, '%25')
+              .replace(/\r/g, '%0D')
+              .replace(/\n/g, '%0A')
+            console.error(
+              `::error title=Electron Builder ${platformName}-${archName} ${mode}::${commandSafe}`
+            )
+            console.error(error)
+            process.exit(1)
+          })
           '@ | Set-Content -Path .github/workflows/.tmp/run-electron-builder.cjs -Encoding utf8
 
           @'
@@ -1588,11 +1674,19 @@ jobs:
               }
           }
 
+          function Reset-ReleaseDirectory() {
+            if (Test-Path 'release') {
+              Remove-Item -LiteralPath 'release' -Recurse -Force -ErrorAction SilentlyContinue
+            }
+            New-Item -ItemType Directory -Path 'release' -Force | Out-Null
+          }
+
           if ('${{ matrix.platform }}' -eq 'linux' -and '${{ matrix.arch }}' -eq 'arm64') {
             $targets = @('AppImage', 'deb', 'tar.gz')
             foreach ($target in $targets) {
               $safeTarget = $target.Replace('.', '_').Replace('/', '_')
               $targetLogPath = Join-Path $diagnosticsDir ("electron-builder-$safeTarget.log")
+              Reset-ReleaseDirectory
               $env:NSMUSICS_ELECTRON_TARGETS = $target
               node .github/workflows/.tmp/run-electron-builder.cjs package *>&1 | Tee-Object -FilePath $targetLogPath
               $targetExitCode = $LASTEXITCODE
@@ -1624,6 +1718,7 @@ jobs:
               for ($attempt = 1; $attempt -le $maxAttempts; $attempt++) {
                 $logSuffix = if ($maxAttempts -gt 1) { "$target-attempt$attempt" } else { $target }
                 $targetLogPath = Join-Path $diagnosticsDir ("electron-builder-$logSuffix.log")
+                Reset-ReleaseDirectory
                 $env:NSMUSICS_ELECTRON_TARGETS = $target
                 node .github/workflows/.tmp/run-electron-builder.cjs package *>&1 | Tee-Object -FilePath $targetLogPath
                 $targetExitCode = $LASTEXITCODE
