@@ -2187,7 +2187,7 @@ jobs:
       - build
       - report
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 40
     permissions:
       contents: write
 
@@ -2324,6 +2324,63 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          set -euo pipefail
+
+          retry_gh() {
+            local attempt=1
+            local max_attempts=5
+            local sleep_seconds=15
+
+            while true; do
+              if gh "$@"; then
+                return 0
+              fi
+
+              if [ "${attempt}" -ge "${max_attempts}" ]; then
+                echo "gh command failed after ${attempt} attempts: gh $*" >&2
+                return 1
+              fi
+
+              echo "gh command failed on attempt ${attempt}/${max_attempts}: gh $*" >&2
+              echo "Retrying in ${sleep_seconds}s..." >&2
+              sleep "${sleep_seconds}"
+              attempt=$((attempt + 1))
+            done
+          }
+
+          release_exists() {
+            local attempt=1
+            local max_attempts=5
+            local sleep_seconds=10
+            local stderr_file
+            stderr_file="$(mktemp)"
+
+            while true; do
+              if gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${1}" >/dev/null 2>"${stderr_file}"; then
+                rm -f "${stderr_file}"
+                return 0
+              fi
+
+              if grep -Eq 'HTTP 404|Not Found' "${stderr_file}"; then
+                rm -f "${stderr_file}"
+                return 1
+              fi
+
+              if [ "${attempt}" -ge "${max_attempts}" ]; then
+                cat "${stderr_file}" >&2
+                rm -f "${stderr_file}"
+                echo "Unable to determine whether release ${1} exists after ${attempt} attempts." >&2
+                return 2
+              fi
+
+              cat "${stderr_file}" >&2
+              echo "Retrying release existence check for ${1} in ${sleep_seconds}s..." >&2
+              sleep "${sleep_seconds}"
+              : > "${stderr_file}"
+              attempt=$((attempt + 1))
+            done
+          }
+
           tag="${GITHUB_REF_NAME}"
           mapfile -t files < release-artifacts/publish-assets.txt
 
@@ -2337,9 +2394,16 @@ jobs:
             expected_asset_names+=("$(basename "${file_path}")")
           done
 
-          if gh release view "${tag}" >/dev/null 2>&1; then
-            gh release edit "${tag}" --notes-file release-artifacts/release-notes.md --title "${tag}"
-            gh release upload "${tag}" "${files[@]}" --clobber
+          if release_exists "${tag}"; then
+            release_status=0
+          else
+            release_status=$?
+          fi
+
+          if [ "${release_status}" -eq 0 ]; then
+            retry_gh release edit "${tag}" --notes-file release-artifacts/release-notes.md --title "${tag}"
+            retry_gh release upload "${tag}" "${files[@]}" --clobber
+            current_asset_names="$(retry_gh release view "${tag}" --json assets --jq '.assets[].name')"
             while IFS= read -r asset_name; do
               keep_asset=false
               for expected_name in "${expected_asset_names[@]}"; do
@@ -2349,11 +2413,14 @@ jobs:
                 fi
               done
               if [ -n "${asset_name}" ] && [ "${keep_asset}" = false ]; then
-                gh release delete-asset "${tag}" "${asset_name}" --yes
+                retry_gh release delete-asset "${tag}" "${asset_name}" --yes
               fi
-            done < <(gh release view "${tag}" --json assets --jq '.assets[].name')
+            done <<< "${current_asset_names}"
+          elif [ "${release_status}" -eq 1 ]; then
+            retry_gh release create "${tag}" "${files[@]}" --notes-file release-artifacts/release-notes.md --title "${tag}"
           else
-            gh release create "${tag}" "${files[@]}" --notes-file release-artifacts/release-notes.md --title "${tag}"
+            echo "Failed to resolve release existence state for ${tag}." >&2
+            exit 1
           fi
 
       - name: Verify published release assets
@@ -2371,6 +2438,8 @@ jobs:
           const repo = process.env.GITHUB_REPOSITORY
           const summaryPath = process.env.GITHUB_STEP_SUMMARY
           const publishListPath = path.join('release-artifacts', 'publish-assets.txt')
+          const maxAttempts = 18
+          const sleepSeconds = 10
 
           if (!fs.existsSync(publishListPath)) {
             throw new Error(`Expected publish asset list not found: ${publishListPath}`)
@@ -2402,48 +2471,80 @@ jobs:
             }
           })
 
-          const releaseJson = childProcess.execFileSync(
-            'gh',
-            ['api', '-H', 'Accept: application/vnd.github+json', `repos/${repo}/releases/tags/${tag}`],
-            { encoding: 'utf8' }
-          )
-          const release = JSON.parse(releaseJson)
-          const remoteAssets = (release.assets || []).map((asset) => ({
-            name: asset.name,
-            size: asset.size,
-            digest: asset.digest || '',
-          }))
-
           const expectedByName = new Map(localAssets.map((asset) => [asset.name, asset]))
-          const actualByName = new Map(remoteAssets.map((asset) => [asset.name, asset]))
-
           const expectedNames = [...expectedByName.keys()].sort()
-          const actualNames = [...actualByName.keys()].sort()
 
-          if (expectedNames.join('\n') !== actualNames.join('\n')) {
-            throw new Error(
-              `Published release asset names do not match expected assets.\nExpected: ${expectedNames.join(', ')}\nActual: ${actualNames.join(', ')}`
-            )
+          const sleep = (seconds) => {
+            childProcess.execFileSync('sleep', [String(seconds)], { stdio: 'inherit' })
           }
 
-          for (const expected of localAssets) {
-            const actual = actualByName.get(expected.name)
-            if (!actual) {
-              throw new Error(`Published release asset missing: ${expected.name}`)
-            }
-            if (!actual.digest) {
-              throw new Error(`Published release asset digest missing from GitHub API response: ${expected.name}`)
-            }
-            if (expected.size !== actual.size) {
+          const validateRemoteAssets = (remoteAssets) => {
+            const actualByName = new Map(remoteAssets.map((asset) => [asset.name, asset]))
+            const actualNames = [...actualByName.keys()].sort()
+
+            if (expectedNames.join('\n') !== actualNames.join('\n')) {
               throw new Error(
-                `Published release asset size mismatch for ${expected.name}. expected=${expected.size} actual=${actual.size}`
+                `Published release asset names do not match expected assets.\nExpected: ${expectedNames.join(', ')}\nActual: ${actualNames.join(', ')}`
               )
             }
-            if (expected.digest !== actual.digest) {
-              throw new Error(
-                `Published release asset digest mismatch for ${expected.name}. expected=${expected.digest} actual=${actual.digest}`
-              )
+
+            for (const expected of localAssets) {
+              const actual = actualByName.get(expected.name)
+              if (!actual) {
+                throw new Error(`Published release asset missing: ${expected.name}`)
+              }
+              if (!actual.digest) {
+                throw new Error(`Published release asset digest missing from GitHub API response: ${expected.name}`)
+              }
+              if (expected.size !== actual.size) {
+                throw new Error(
+                  `Published release asset size mismatch for ${expected.name}. expected=${expected.size} actual=${actual.size}`
+                )
+              }
+              if (expected.digest !== actual.digest) {
+                throw new Error(
+                  `Published release asset digest mismatch for ${expected.name}. expected=${expected.digest} actual=${actual.digest}`
+                )
+              }
             }
+          }
+
+          let verifiedAssets = null
+          let lastError = null
+
+          for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+            try {
+              const releaseJson = childProcess.execFileSync(
+                'gh',
+                ['api', '-H', 'Accept: application/vnd.github+json', `repos/${repo}/releases/tags/${tag}`],
+                { encoding: 'utf8' }
+              )
+              const release = JSON.parse(releaseJson)
+              const remoteAssets = (release.assets || []).map((asset) => ({
+                name: asset.name,
+                size: asset.size,
+                digest: asset.digest || '',
+              }))
+
+              validateRemoteAssets(remoteAssets)
+              verifiedAssets = remoteAssets
+              lastError = null
+              break
+            } catch (error) {
+              lastError = error
+              if (attempt === maxAttempts) {
+                break
+              }
+              console.log(
+                `Release verification attempt ${attempt}/${maxAttempts} did not pass yet: ${error.message}`
+              )
+              console.log(`Waiting ${sleepSeconds}s for GitHub release asset indexing to settle...`)
+              sleep(sleepSeconds)
+            }
+          }
+
+          if (lastError) {
+            throw lastError
           }
 
           if (summaryPath) {
@@ -2452,8 +2553,9 @@ jobs:
               [
                 '## Release Verification',
                 `- Tag: ${tag}`,
-                `- Verified assets: ${expectedNames.length}`,
+                `- Verified assets: ${verifiedAssets.length}`,
                 '- Validation: name + size + sha256 digest',
+                `- Retry window: up to ${maxAttempts * sleepSeconds} seconds for GitHub release indexing`,
               ].join('\n') + '\n'
             )
           }
