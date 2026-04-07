@@ -873,13 +873,17 @@ jobs:
           if (releaseFiles.length === 0) {
             fail(`release output is empty under ${releaseDir}`)
           }
+          const rootFiles = releaseFiles.filter((targetPath) => path.dirname(targetPath) === releaseDir)
 
           fs.rmSync(bundleRoot, { recursive: true, force: true })
           fs.mkdirSync(publishDir, { recursive: true })
 
           const stagedAssets = []
           for (const assetSpec of spec.assets) {
-            const matches = releaseFiles.filter((targetPath) => assetSpec.matches(fileBasename(targetPath)))
+            let matches = rootFiles.filter((targetPath) => assetSpec.matches(fileBasename(targetPath)))
+            if (matches.length === 0) {
+              matches = releaseFiles.filter((targetPath) => assetSpec.matches(fileBasename(targetPath)))
+            }
             if (matches.length !== 1) {
               fail(
                 `Expected exactly one ${platformLabel}-${archName} ${assetSpec.kind} asset, found ${matches.length}. Candidates: ${matches
@@ -1482,7 +1486,12 @@ jobs:
           FPM_DEBUG: ${{ runner.os == 'Linux' && '1' || '' }}
         run: |
           $diagnosticsDir = '.github/workflows/.tmp/diagnostics'
+          $collectedAssetsDir = '.github/workflows/.tmp/collected-release-assets'
           New-Item -ItemType Directory -Path $diagnosticsDir -Force | Out-Null
+          if (Test-Path $collectedAssetsDir) {
+            Remove-Item -LiteralPath $collectedAssetsDir -Recurse -Force -ErrorAction SilentlyContinue
+          }
+          New-Item -ItemType Directory -Path $collectedAssetsDir -Force | Out-Null
           $logPath = Join-Path $diagnosticsDir 'electron-builder-package.log'
 
           function Invoke-ElectronBuilderTarget([string]$target, [string]$targetLogPath) {
@@ -1541,6 +1550,38 @@ jobs:
             return $true
           }
 
+          function Collect-ReleaseArtifacts([string]$label, [string[]]$patterns) {
+            foreach ($pattern in $patterns) {
+              $matches = Get-ChildItem -Path 'release' -Recurse -File -ErrorAction SilentlyContinue |
+                Where-Object { $_.Name -like $pattern } |
+                Sort-Object FullName |
+                Select-Object -ExpandProperty FullName
+              $matches = @($matches | Select-Object -Unique)
+
+              if ($matches.Count -ne 1) {
+                $candidateList = if ($matches.Count -eq 0) { '' } else { ($matches -join ', ') }
+                Write-Host "::error title=Collected packaged artifact missing::Expected exactly one $label file matching $pattern, found $($matches.Count). Candidates: $candidateList"
+                exit 1
+              }
+
+              $sourcePath = $matches[0]
+              $destinationPath = Join-Path $collectedAssetsDir (Split-Path -Leaf $sourcePath)
+              Copy-Item -LiteralPath $sourcePath -Destination $destinationPath -Force
+            }
+          }
+
+          function Restore-CollectedArtifacts() {
+            if (-not (Test-Path 'release')) {
+              New-Item -ItemType Directory -Path 'release' -Force | Out-Null
+            }
+
+            Get-ChildItem -Path $collectedAssetsDir -File -ErrorAction SilentlyContinue |
+              ForEach-Object {
+                $destinationPath = Join-Path 'release' $_.Name
+                Copy-Item -LiteralPath $_.FullName -Destination $destinationPath -Force
+              }
+          }
+
           if ('${{ matrix.platform }}' -eq 'linux' -and '${{ matrix.arch }}' -eq 'arm64') {
             $targets = @('AppImage', 'deb', 'tar.gz')
             foreach ($target in $targets) {
@@ -1550,7 +1591,21 @@ jobs:
               if ($targetExitCode -ne 0) {
                 exit $targetExitCode
               }
+
+              switch ($target) {
+                'AppImage' {
+                  Collect-ReleaseArtifacts -label 'linux-arm64 AppImage' -patterns @('*.AppImage')
+                }
+                'deb' {
+                  Collect-ReleaseArtifacts -label 'linux-arm64 deb' -patterns @('*.deb')
+                }
+                'tar.gz' {
+                  Collect-ReleaseArtifacts -label 'linux-arm64 tar.gz' -patterns @('*.tar.gz')
+                }
+              }
             }
+
+            Restore-CollectedArtifacts
             Remove-Item Env:NSMUSICS_ELECTRON_TARGETS -ErrorAction SilentlyContinue
           } elseif ('${{ matrix.platform }}' -eq 'mac') {
             $macTargets = @('zip', 'dmg')
@@ -1576,8 +1631,18 @@ jobs:
               if (-not $targetSucceeded) {
                 exit 1
               }
+
+              switch ($target) {
+                'zip' {
+                  Collect-ReleaseArtifacts -label 'macOS zip' -patterns @('*.zip')
+                }
+                'dmg' {
+                  Collect-ReleaseArtifacts -label 'macOS dmg' -patterns @('*.dmg', '*.dmg.blockmap')
+                }
+              }
             }
 
+            Restore-CollectedArtifacts
             Remove-Item Env:NSMUSICS_ELECTRON_TARGETS -ErrorAction SilentlyContinue
           } else {
             node .github/workflows/.tmp/run-electron-builder.cjs package *>&1 | Tee-Object -FilePath $logPath
