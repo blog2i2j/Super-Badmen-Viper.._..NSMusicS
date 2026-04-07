@@ -2368,31 +2368,61 @@ jobs:
             local attempt=1
             local max_attempts=5
             local sleep_seconds=10
-            local stderr_file
-            stderr_file="$(mktemp)"
+            local response_file
+            local headers_file
+            local api_url
+            local http_code
+            local curl_exit
+            response_file="$(mktemp)"
+            headers_file="$(mktemp)"
+            api_url="https://api.github.com/repos/${GH_REPO}/releases/tags/${target_tag}"
 
             while true; do
-              if gh release view "${target_tag}" --json databaseId >/dev/null 2>"${stderr_file}"; then
-                rm -f "${stderr_file}"
+              curl_exit=0
+              http_code="$(
+                curl --silent --show-error --location \
+                  --output "${response_file}" \
+                  --dump-header "${headers_file}" \
+                  --write-out "%{http_code}" \
+                  -H "Authorization: Bearer ${GH_TOKEN}" \
+                  -H "Accept: application/vnd.github+json" \
+                  -H "X-GitHub-Api-Version: 2022-11-28" \
+                  "${api_url}"
+              )" || curl_exit=$?
+
+              if [ "${curl_exit}" -eq 0 ] && [ "${http_code}" = "200" ]; then
+                rm -f "${response_file}" "${headers_file}"
                 return 0
               fi
 
-              if grep -Eq 'HTTP 404|Not Found' "${stderr_file}"; then
-                rm -f "${stderr_file}"
+              if [ "${curl_exit}" -eq 0 ] && [ "${http_code}" = "404" ]; then
+                rm -f "${response_file}" "${headers_file}"
                 return 1
               fi
 
               if [ "${attempt}" -ge "${max_attempts}" ]; then
-                cat "${stderr_file}" >&2
-                rm -f "${stderr_file}"
+                if [ -s "${headers_file}" ]; then
+                  cat "${headers_file}" >&2
+                fi
+                if [ -s "${response_file}" ]; then
+                  cat "${response_file}" >&2
+                fi
+                rm -f "${response_file}" "${headers_file}"
                 echo "Unable to determine whether release ${target_tag} exists after ${attempt} attempts." >&2
                 return 2
               fi
 
-              cat "${stderr_file}" >&2
+              echo "Release lookup attempt ${attempt}/${max_attempts} for ${target_tag} returned curl_exit=${curl_exit} http_code=${http_code:-unset}." >&2
+              if [ -s "${headers_file}" ]; then
+                cat "${headers_file}" >&2
+              fi
+              if [ -s "${response_file}" ]; then
+                cat "${response_file}" >&2
+              fi
               echo "Retrying release existence check for ${target_tag} in ${sleep_seconds}s..." >&2
               sleep "${sleep_seconds}"
-              : > "${stderr_file}"
+              : > "${response_file}"
+              : > "${headers_file}"
               attempt=$((attempt + 1))
             done
           }
