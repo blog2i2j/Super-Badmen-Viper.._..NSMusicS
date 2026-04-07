@@ -21,6 +21,9 @@ on:
       - "v*"
       - "electron-v*"
       - "NSMusicS-v*"
+      - "validate-v*"
+      - "validate-electron-v*"
+      - "validate-NSMusicS-v*"
 
 concurrency:
   group: electron-release-${{ github.ref }}
@@ -199,6 +202,7 @@ jobs:
 
           raw_tag="${GITHUB_REF_NAME}"
           normalized_tag="${raw_tag}"
+          normalized_tag="${normalized_tag#validate-}"
           normalized_tag="${normalized_tag#electron-v}"
           normalized_tag="${normalized_tag#NSMusicS-v}"
           normalized_tag="${normalized_tag#v}"
@@ -2393,6 +2397,10 @@ jobs:
           }
 
           tag="${GITHUB_REF_NAME}"
+          release_is_validation=false
+          if [[ "${tag}" == validate-* ]]; then
+            release_is_validation=true
+          fi
           mapfile -t files < release-artifacts/publish-assets.txt
 
           if [ "${#files[@]}" -eq 0 ]; then
@@ -2428,11 +2436,21 @@ jobs:
               fi
             done <<< "${current_asset_names}"
           elif [ "${release_status}" -eq 1 ]; then
-            retry_gh release create "${tag}" "${files[@]}" --notes-file release-artifacts/release-notes.md --title "${tag}"
+            if [ "${release_is_validation}" = true ]; then
+              retry_gh release create "${tag}" "${files[@]}" --notes-file release-artifacts/release-notes.md --title "${tag}" --draft
+            else
+              retry_gh release create "${tag}" "${files[@]}" --notes-file release-artifacts/release-notes.md --title "${tag}"
+            fi
           else
             echo "Failed to resolve release existence state for ${tag}." >&2
             exit 1
           fi
+
+          {
+            echo "## Release Publish"
+            echo "- Tag: ${tag}"
+            echo "- Validation lane: ${release_is_validation}"
+          } >> "${GITHUB_STEP_SUMMARY}"
 
       - name: Verify published release assets
         shell: bash
@@ -2572,3 +2590,17 @@ jobs:
             )
           }
           NODE
+
+      - name: Cleanup validation release
+        if: ${{ startsWith(github.ref, 'refs/tags/validate-') && success() }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          gh release delete "${GITHUB_REF_NAME}" --yes
+          {
+            echo "## Validation Cleanup"
+            echo "- Deleted draft validation release: ${GITHUB_REF_NAME}"
+          } >> "${GITHUB_STEP_SUMMARY}"
