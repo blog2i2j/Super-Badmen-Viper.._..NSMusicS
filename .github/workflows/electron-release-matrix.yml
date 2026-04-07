@@ -1534,6 +1534,64 @@ jobs:
           compression-level: 0
           retention-days: 21
 
+      - name: Surface failure diagnostics in job log
+        if: ${{ failure() }}
+        run: |
+          $summaryPath = $env:GITHUB_STEP_SUMMARY
+
+          function Append-Summary([string]$message) {
+            if ($summaryPath) {
+              Add-Content -Path $summaryPath -Value $message
+            }
+          }
+
+          function Show-LogTail([string]$title, [string]$path) {
+            Write-Host "::group::$title"
+            Get-Content -LiteralPath $path -Tail 160
+            Write-Host "::endgroup::"
+          }
+
+          $paths = @()
+
+          if (Test-Path '.github/workflows/.tmp/diagnostics') {
+            $paths += Get-ChildItem -Path '.github/workflows/.tmp/diagnostics' -Recurse -File |
+              Sort-Object FullName |
+              Select-Object -ExpandProperty FullName
+          }
+
+          if (Test-Path 'release') {
+            $paths += Get-ChildItem -Path 'release' -Recurse -File -ErrorAction SilentlyContinue |
+              Where-Object {
+                $_.Name -match '\.log$' -or
+                $_.Name -eq 'builder-debug.yml' -or
+                $_.Name -eq 'builder-effective-config.yaml'
+              } |
+              Sort-Object FullName |
+              Select-Object -ExpandProperty FullName
+          }
+
+          $paths = @($paths | Select-Object -Unique)
+
+          if ($paths.Count -eq 0) {
+            Write-Host '::warning title=No failure diagnostics captured::No diagnostic log files were found in the workspace.'
+            Append-Summary('### Failure Diagnostics')
+            Append-Summary('- WARN No diagnostic log files were found in the workspace.')
+            exit 0
+          }
+
+          Write-Host "::error title=Build failure diagnostics surfaced::See the grouped log tails below and the uploaded diagnostics artifact for the full files."
+          Write-Host '::group::Failure diagnostics inventory'
+          $paths | ForEach-Object { Write-Host $_ }
+          Write-Host '::endgroup::'
+
+          Append-Summary('### Failure Diagnostics')
+          Append-Summary("- Surfaced logs: $($paths.Count)")
+
+          foreach ($path in $paths) {
+            Append-Summary("- $(Split-Path -Leaf $path)")
+            Show-LogTail -title ("Failure log: " + (Split-Path -Leaf $path)) -path $path
+          }
+
       - name: Upload failure diagnostics
         if: ${{ failure() }}
         uses: actions/upload-artifact@v7
@@ -1902,31 +1960,100 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          tag="${GITHUB_REF_NAME}"
-          mapfile -t expected_files < release-artifacts/publish-assets.txt
+          node - <<'NODE'
+          const crypto = require('node:crypto')
+          const fs = require('node:fs')
+          const path = require('node:path')
+          const childProcess = require('node:child_process')
 
-          if [ "${#expected_files[@]}" -eq 0 ]; then
-            echo "No expected publish assets were found for verification." >&2
-            exit 1
-          fi
+          const tag = process.env.GITHUB_REF_NAME
+          const repo = process.env.GITHUB_REPOSITORY
+          const summaryPath = process.env.GITHUB_STEP_SUMMARY
+          const publishListPath = path.join('release-artifacts', 'publish-assets.txt')
 
-          mapfile -t expected_names < <(
-            for file_path in "${expected_files[@]}"; do
-              basename "${file_path}"
-            done | sort -u
+          if (!fs.existsSync(publishListPath)) {
+            throw new Error(`Expected publish asset list not found: ${publishListPath}`)
+          }
+
+          const localPaths = fs
+            .readFileSync(publishListPath, 'utf8')
+            .split(/\r?\n/)
+            .map((value) => value.trim())
+            .filter(Boolean)
+
+          if (localPaths.length === 0) {
+            throw new Error('No expected publish assets were found for verification.')
+          }
+
+          const localAssets = localPaths.map((filePath) => {
+            if (!fs.existsSync(filePath)) {
+              throw new Error(`Expected local release asset missing: ${filePath}`)
+            }
+            const stat = fs.statSync(filePath)
+            const digest = crypto
+              .createHash('sha256')
+              .update(fs.readFileSync(filePath))
+              .digest('hex')
+            return {
+              name: path.basename(filePath),
+              size: stat.size,
+              digest: `sha256:${digest}`,
+            }
+          })
+
+          const releaseJson = childProcess.execFileSync(
+            'gh',
+            ['api', '-H', 'Accept: application/vnd.github+json', `repos/${repo}/releases/tags/${tag}`],
+            { encoding: 'utf8' }
           )
-          mapfile -t actual_names < <(gh release view "${tag}" --json assets --jq '.assets[].name' | sort -u)
+          const release = JSON.parse(releaseJson)
+          const remoteAssets = (release.assets || []).map((asset) => ({
+            name: asset.name,
+            size: asset.size,
+            digest: asset.digest || '',
+          }))
 
-          printf '%s\n' "${expected_names[@]}" > expected-assets.txt
-          printf '%s\n' "${actual_names[@]}" > actual-assets.txt
+          const expectedByName = new Map(localAssets.map((asset) => [asset.name, asset]))
+          const actualByName = new Map(remoteAssets.map((asset) => [asset.name, asset]))
 
-          if ! diff -u expected-assets.txt actual-assets.txt; then
-            echo "Published release assets do not match expected assets." >&2
-            exit 1
-          fi
+          const expectedNames = [...expectedByName.keys()].sort()
+          const actualNames = [...actualByName.keys()].sort()
 
-          {
-            echo "## Release Verification"
-            echo "- Tag: ${tag}"
-            echo "- Verified assets: ${#actual_names[@]}"
-          } >> "${GITHUB_STEP_SUMMARY}"
+          if (expectedNames.join('\n') !== actualNames.join('\n')) {
+            throw new Error(
+              `Published release asset names do not match expected assets.\nExpected: ${expectedNames.join(', ')}\nActual: ${actualNames.join(', ')}`
+            )
+          }
+
+          for (const expected of localAssets) {
+            const actual = actualByName.get(expected.name)
+            if (!actual) {
+              throw new Error(`Published release asset missing: ${expected.name}`)
+            }
+            if (!actual.digest) {
+              throw new Error(`Published release asset digest missing from GitHub API response: ${expected.name}`)
+            }
+            if (expected.size !== actual.size) {
+              throw new Error(
+                `Published release asset size mismatch for ${expected.name}. expected=${expected.size} actual=${actual.size}`
+              )
+            }
+            if (expected.digest !== actual.digest) {
+              throw new Error(
+                `Published release asset digest mismatch for ${expected.name}. expected=${expected.digest} actual=${actual.digest}`
+              )
+            }
+          }
+
+          if (summaryPath) {
+            fs.appendFileSync(
+              summaryPath,
+              [
+                '## Release Verification',
+                `- Tag: ${tag}`,
+                `- Verified assets: ${expectedNames.length}`,
+                '- Validation: name + size + sha256 digest',
+              ].join('\n') + '\n'
+            )
+          }
+          NODE
