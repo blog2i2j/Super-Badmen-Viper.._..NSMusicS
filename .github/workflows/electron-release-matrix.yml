@@ -609,7 +609,6 @@ jobs:
                 ? {}
                 : {
                     target: ['AppImage', 'deb', 'tar.gz'],
-                    depends: ['mpv'],
                     artifactName: '${productName}-Linux-${version}-${arch}.${ext}',
                   }),
             },
@@ -630,6 +629,9 @@ jobs:
             ...(mode === 'dir'
               ? {}
               : {
+                  deb: {
+                    depends: ['mpv'],
+                  },
                   nsis: {
                     oneClick: false,
                     perMachine: true,
