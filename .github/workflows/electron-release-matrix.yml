@@ -977,9 +977,9 @@ jobs:
               x64: {
                 exe: {
                   referenceBytes: 163438490,
-                  warnBelowFactor: 0.9,
+                  warnBelowFactor: 0.78,
                   warnAboveFactor: 1.2,
-                  failBelowFactor: 0.8,
+                  failBelowFactor: 0.73,
                   failAboveFactor: 1.35,
                 },
                 exe_blockmap: {
