@@ -2014,6 +2014,311 @@ jobs:
           NSMUSICS_SUPPORT_REASON: ${{ matrix.support_reason }}
         run: node .github/workflows/.tmp/stage-publish-assets.cjs
 
+      - name: Inspect packaged publish contents
+        env:
+          NSMUSICS_ELECTRON_PLATFORM: ${{ matrix.platform }}
+          NSMUSICS_PLATFORM_NAME: ${{ matrix.platform_name }}
+          NSMUSICS_ELECTRON_ARCH: ${{ matrix.arch }}
+          NSMUSICS_BUILD_MODE: ${{ env.BUILD_MODE }}
+        run: |
+          $bundleLabel = "$($env:NSMUSICS_PLATFORM_NAME)-$($env:NSMUSICS_ELECTRON_ARCH)"
+          $bundleRoot = Join-Path (Join-Path '.github/workflows/.out' $env:NSMUSICS_BUILD_MODE) $bundleLabel
+          $publishDir = Join-Path $bundleRoot 'publish'
+          $inspectionRoot = Join-Path $bundleRoot 'inspection'
+          $scriptPath = '.github/workflows/.tmp/summarize-package-contents.cjs'
+          if (-not (Test-Path $publishDir)) {
+            throw "Publish directory not found: $publishDir"
+          }
+          if (Test-Path $inspectionRoot) {
+            Remove-Item -LiteralPath $inspectionRoot -Recurse -Force -ErrorAction SilentlyContinue
+          }
+          New-Item -ItemType Directory -Path $inspectionRoot -Force | Out-Null
+
+          @'
+          const fs = require('node:fs')
+          const path = require('node:path')
+
+          const [rootPathArg, outputPathArg, platformArg, archArg, kindArg, sourceFileArg] = process.argv.slice(2)
+
+          if (!rootPathArg || !outputPathArg || !platformArg || !archArg || !kindArg || !sourceFileArg) {
+            throw new Error('Expected arguments: <rootPath> <outputPath> <platform> <arch> <kind> <sourceFile>')
+          }
+
+          const normalize = (value) => value.split(path.sep).join('/')
+          const formatBytes = (value) => {
+            const units = ['B', 'KB', 'MB', 'GB']
+            let size = value
+            let unitIndex = 0
+            while (size >= 1024 && unitIndex < units.length - 1) {
+              size /= 1024
+              unitIndex += 1
+            }
+            return `${size.toFixed(size >= 100 ? 0 : size >= 10 ? 1 : 2)} ${units[unitIndex]}`
+          }
+
+          const maybeCollapseSingleDirectory = (inputDir) => {
+            let current = path.resolve(inputDir)
+            while (true) {
+              const entries = fs
+                .readdirSync(current, { withFileTypes: true })
+                .filter((entry) => entry.name !== '.DS_Store')
+              if (entries.length !== 1 || !entries[0].isDirectory()) {
+                return current
+              }
+              current = path.join(current, entries[0].name)
+            }
+          }
+
+          const rootPath = maybeCollapseSingleDirectory(rootPathArg)
+          const fileEntries = []
+          const dirSizes = new Map()
+          let fileCount = 0
+          let dirCount = 0
+          let symlinkCount = 0
+          let totalBytes = 0
+          let localesTotalBytes = 0
+          let localesCount = 0
+          let resourcesTotalBytes = 0
+          let resourcesNodeTotalBytes = 0
+          let mpvTotalBytes = 0
+          let electronLocalesTotalBytes = 0
+          let appAsarBytes = 0
+          let betterSqliteBytes = 0
+          const forbiddenPaths = []
+
+          const addDirSize = (relativeFilePath, bytes) => {
+            const directory = path.dirname(relativeFilePath)
+            const segments = directory === '.' ? [] : directory.split('/')
+            for (let depth = 1; depth <= Math.min(segments.length, 4); depth += 1) {
+              const prefix = segments.slice(0, depth).join('/')
+              dirSizes.set(prefix, (dirSizes.get(prefix) || 0) + bytes)
+            }
+          }
+
+          const walk = (currentDir) => {
+            const entries = fs.readdirSync(currentDir, { withFileTypes: true })
+            for (const entry of entries) {
+              const fullPath = path.join(currentDir, entry.name)
+              const stat = fs.lstatSync(fullPath)
+              if (stat.isSymbolicLink()) {
+                symlinkCount += 1
+                continue
+              }
+              if (stat.isDirectory()) {
+                dirCount += 1
+                walk(fullPath)
+                continue
+              }
+              if (!stat.isFile()) {
+                continue
+              }
+              const relativePath = normalize(path.relative(rootPath, fullPath))
+              const lowerPath = relativePath.toLowerCase()
+              const bytes = stat.size
+              fileCount += 1
+              totalBytes += bytes
+              fileEntries.push({ path: relativePath, bytes })
+              addDirSize(relativePath, bytes)
+
+              if (
+                /(^|\/)(locales|locales_[^/]+)\//i.test(relativePath) ||
+                /\.lproj\/locale\.pak$/i.test(relativePath) ||
+                /(^|\/)locales\/[^/]+\.pak$/i.test(relativePath)
+              ) {
+                localesTotalBytes += bytes
+                localesCount += 1
+              }
+              if (/(^|\/)(resources|Resources)\//.test(relativePath)) {
+                resourcesTotalBytes += bytes
+              }
+              if (/(^|\/)(resources|Resources)\/node\//.test(relativePath)) {
+                resourcesNodeTotalBytes += bytes
+              }
+              if (/(^|\/)(resources|Resources)\/mpv[^/]*\//.test(relativePath)) {
+                mpvTotalBytes += bytes
+              }
+              if (/\/locales\/[^/]+\.pak$/i.test(relativePath) || /\.lproj\/locale\.pak$/i.test(relativePath)) {
+                electronLocalesTotalBytes += bytes
+              }
+              if (/\/app\.asar$/i.test(relativePath)) {
+                appAsarBytes += bytes
+              }
+              if (/better_sqlite3\.node$/i.test(relativePath)) {
+                betterSqliteBytes += bytes
+              }
+              if (
+                /(^|\/)(resources|Resources)\/node\/(linux|macos|win)\//.test(lowerPath) ||
+                /mpv-x86_64-20241124\/(7z|doc|installer)\//.test(lowerPath) ||
+                /mpv-x86_64-20241124\/.*\.(7z|pdf|ignore)$/.test(lowerPath) ||
+                /mpv-x86_64-20241124\/chocolatey/.test(lowerPath) ||
+                /mpv-x86_64-20241124\/(updater\.bat|settings\.xml)$/.test(lowerPath)
+              ) {
+                forbiddenPaths.push(relativePath)
+              }
+            }
+          }
+
+          walk(rootPath)
+
+          fileEntries.sort((left, right) => right.bytes - left.bytes || left.path.localeCompare(right.path))
+          const topDirectories = [...dirSizes.entries()]
+            .map(([dirPath, bytes]) => ({ path: dirPath, bytes }))
+            .sort((left, right) => right.bytes - left.bytes || left.path.localeCompare(right.path))
+            .slice(0, 25)
+
+          const summary = {
+            platform: platformArg,
+            arch: archArg,
+            kind: kindArg,
+            source_file: path.basename(sourceFileArg),
+            source_path: normalize(sourceFileArg),
+            analyzed_root: normalize(rootPath),
+            file_count: fileCount,
+            dir_count: dirCount,
+            symlink_count: symlinkCount,
+            total_bytes: totalBytes,
+            app_asar_bytes: appAsarBytes,
+            locales_total_bytes: localesTotalBytes,
+            locales_count: localesCount,
+            electron_locales_total_bytes: electronLocalesTotalBytes,
+            resources_total_bytes: resourcesTotalBytes,
+            resources_node_total_bytes: resourcesNodeTotalBytes,
+            mpv_total_bytes: mpvTotalBytes,
+            better_sqlite3_bytes: betterSqliteBytes,
+            forbidden_paths: forbiddenPaths.sort(),
+            top_files: fileEntries.slice(0, 25),
+            top_directories: topDirectories,
+          }
+
+          const markdownLines = [
+            `# Packaged Content Summary: ${platformArg}-${archArg} ${kindArg}`,
+            '',
+            `- Source file: ${summary.source_file}`,
+            `- Analyzed root: ${summary.analyzed_root}`,
+            `- Files: ${summary.file_count}`,
+            `- Directories: ${summary.dir_count}`,
+            `- Symlinks: ${summary.symlink_count}`,
+            `- Total extracted bytes: ${formatBytes(summary.total_bytes)}`,
+            `- app.asar: ${formatBytes(summary.app_asar_bytes)}`,
+            `- Resources total: ${formatBytes(summary.resources_total_bytes)}`,
+            `- Electron locales total: ${formatBytes(summary.electron_locales_total_bytes)}`,
+            `- Locale entries counted: ${summary.locales_count}`,
+            `- mpv payload total: ${formatBytes(summary.mpv_total_bytes)}`,
+            `- better_sqlite3.node: ${formatBytes(summary.better_sqlite3_bytes)}`,
+            `- Forbidden paths: ${summary.forbidden_paths.length}`,
+            '',
+            '## Top Directories',
+            '| Path | Size |',
+            '| --- | ---: |',
+            ...summary.top_directories.map((entry) => `| ${entry.path} | ${formatBytes(entry.bytes)} |`),
+            '',
+            '## Top Files',
+            '| Path | Size |',
+            '| --- | ---: |',
+            ...summary.top_files.map((entry) => `| ${entry.path} | ${formatBytes(entry.bytes)} |`),
+          ]
+
+          if (summary.forbidden_paths.length > 0) {
+            markdownLines.push('', '## Forbidden Paths', ...summary.forbidden_paths.map((entry) => `- ${entry}`))
+          }
+
+          fs.mkdirSync(path.dirname(outputPathArg), { recursive: true })
+          fs.writeFileSync(outputPathArg, JSON.stringify(summary, null, 2) + '\n')
+          fs.writeFileSync(outputPathArg.replace(/\.json$/i, '.md'), markdownLines.join('\n') + '\n')
+          '@ | Set-Content -Path $scriptPath -Encoding utf8
+
+          function Get-SinglePublishAsset([string]$pattern, [string]$label) {
+            $matches = Get-ChildItem -Path $publishDir -File -ErrorAction SilentlyContinue |
+              Where-Object { $_.Name -like $pattern } |
+              Sort-Object Name
+            $matches = @($matches)
+            if ($matches.Count -ne 1) {
+              $candidates = if ($matches.Count -eq 0) { '' } else { ($matches.FullName -join ', ') }
+              throw "Expected exactly one $label matching $pattern under $publishDir. Found $($matches.Count). Candidates: $candidates"
+            }
+            return $matches[0].FullName
+          }
+
+          function Write-InspectionSummary([string]$kind, [string]$rootPath, [string]$sourcePath) {
+            $kindDir = Join-Path $inspectionRoot $kind
+            New-Item -ItemType Directory -Path $kindDir -Force | Out-Null
+            $summaryPath = Join-Path $kindDir 'package-content-summary.json'
+            node $scriptPath $rootPath $summaryPath $env:NSMUSICS_PLATFORM_NAME $env:NSMUSICS_ELECTRON_ARCH $kind $sourcePath
+            if ($LASTEXITCODE -ne 0) {
+              throw "Package content summarizer failed for $kind"
+            }
+          }
+
+          if ($env:NSMUSICS_ELECTRON_PLATFORM -eq 'win') {
+            $zipPath = Get-SinglePublishAsset '*.zip' 'Windows packaged zip'
+            $zipExtractDir = Join-Path $inspectionRoot 'zip-extracted'
+            Expand-Archive -LiteralPath $zipPath -DestinationPath $zipExtractDir -Force
+            Write-InspectionSummary -kind 'zip' -rootPath $zipExtractDir -sourcePath $zipPath
+          } elseif ($env:NSMUSICS_ELECTRON_PLATFORM -eq 'linux') {
+            $tarGzPath = Get-SinglePublishAsset '*.tar.gz' 'Linux tar.gz package'
+            $tarExtractDir = Join-Path $inspectionRoot 'tar-gz-extracted'
+            New-Item -ItemType Directory -Path $tarExtractDir -Force | Out-Null
+            & tar -xzf $tarGzPath -C $tarExtractDir
+            if ($LASTEXITCODE -ne 0) {
+              throw "tar extraction failed for $tarGzPath"
+            }
+            Write-InspectionSummary -kind 'tar.gz' -rootPath $tarExtractDir -sourcePath $tarGzPath
+
+            $debPath = Get-SinglePublishAsset '*.deb' 'Linux deb package'
+            $debExtractDir = Join-Path $inspectionRoot 'deb-extracted'
+            New-Item -ItemType Directory -Path $debExtractDir -Force | Out-Null
+            & dpkg-deb -x $debPath $debExtractDir
+            if ($LASTEXITCODE -ne 0) {
+              throw "dpkg-deb extraction failed for $debPath"
+            }
+            Write-InspectionSummary -kind 'deb' -rootPath $debExtractDir -sourcePath $debPath
+
+            $appImagePath = Get-SinglePublishAsset '*.AppImage' 'Linux AppImage package'
+            $appImageExtractDir = Join-Path $inspectionRoot 'appimage-extracted'
+            New-Item -ItemType Directory -Path $appImageExtractDir -Force | Out-Null
+            Push-Location $appImageExtractDir
+            try {
+              & chmod +x $appImagePath
+              & $appImagePath --appimage-extract
+              if ($LASTEXITCODE -ne 0) {
+                throw "AppImage extraction failed for $appImagePath"
+              }
+            } finally {
+              Pop-Location
+            }
+            $appImageRoot = Join-Path $appImageExtractDir 'squashfs-root'
+            if (-not (Test-Path $appImageRoot)) {
+              throw "AppImage extraction output not found: $appImageRoot"
+            }
+            Write-InspectionSummary -kind 'AppImage' -rootPath $appImageRoot -sourcePath $appImagePath
+          } elseif ($env:NSMUSICS_ELECTRON_PLATFORM -eq 'mac') {
+            $zipPath = Get-SinglePublishAsset '*.zip' 'macOS packaged zip'
+            $zipExtractDir = Join-Path $inspectionRoot 'zip-extracted'
+            New-Item -ItemType Directory -Path $zipExtractDir -Force | Out-Null
+            & ditto -x -k $zipPath $zipExtractDir
+            if ($LASTEXITCODE -ne 0) {
+              throw "ditto extraction failed for $zipPath"
+            }
+            Write-InspectionSummary -kind 'zip' -rootPath $zipExtractDir -sourcePath $zipPath
+
+            $dmgPath = Get-SinglePublishAsset '*.dmg' 'macOS dmg package'
+            $dmgMountPath = Join-Path $inspectionRoot 'dmg-mount'
+            New-Item -ItemType Directory -Path $dmgMountPath -Force | Out-Null
+            try {
+              & hdiutil attach $dmgPath -nobrowse -mountpoint $dmgMountPath
+              if ($LASTEXITCODE -ne 0) {
+                throw "hdiutil attach failed for $dmgPath"
+              }
+              Write-InspectionSummary -kind 'dmg' -rootPath $dmgMountPath -sourcePath $dmgPath
+            } finally {
+              & hdiutil detach $dmgMountPath -force | Out-Null
+            }
+          } else {
+            throw "Unsupported inspection platform: $($env:NSMUSICS_ELECTRON_PLATFORM)"
+          }
+
+          node -e "const fs=require('fs'); const path=require('path'); const root=path.resolve(process.argv[1]); const files=[]; const walk=(dir)=>{ for(const entry of fs.readdirSync(dir,{withFileTypes:true})){ const full=path.join(dir,entry.name); if(entry.isDirectory()) walk(full); else if(entry.isFile() && entry.name==='package-content-summary.json') files.push(full); } }; walk(root); const summaries=files.sort().map((filePath)=>JSON.parse(fs.readFileSync(filePath,'utf8'))); fs.writeFileSync(path.join(root,'package-content-summaries.json'), JSON.stringify(summaries,null,2)+'\n');" $inspectionRoot
+
       - name: Upload packaged artifacts
         uses: actions/upload-artifact@v7
         with:
@@ -2021,6 +2326,7 @@ jobs:
           path: |
             NSMusicS-Electron/.github/workflows/.out/${{ env.BUILD_MODE }}/${{ matrix.platform_name }}-${{ matrix.arch }}/build-manifest.json
             NSMusicS-Electron/.github/workflows/.out/${{ env.BUILD_MODE }}/${{ matrix.platform_name }}-${{ matrix.arch }}/publish-assets.txt
+            NSMusicS-Electron/.github/workflows/.out/${{ env.BUILD_MODE }}/${{ matrix.platform_name }}-${{ matrix.arch }}/inspection/**
             NSMusicS-Electron/.github/workflows/.out/${{ env.BUILD_MODE }}/${{ matrix.platform_name }}-${{ matrix.arch }}/publish/**
           if-no-files-found: error
           include-hidden-files: true
@@ -2141,6 +2447,19 @@ jobs:
           const githubRef = process.env.GITHUB_REF
           const githubSha = process.env.GITHUB_SHA
           const summaryPath = process.env.GITHUB_STEP_SUMMARY
+          const formatBytes = (value) => {
+            if (!Number.isFinite(value) || value <= 0) {
+              return '0 B'
+            }
+            const units = ['B', 'KB', 'MB', 'GB']
+            let size = value
+            let unitIndex = 0
+            while (size >= 1024 && unitIndex < units.length - 1) {
+              size /= 1024
+              unitIndex += 1
+            }
+            return `${size.toFixed(size >= 100 ? 0 : size >= 10 ? 1 : 2)} ${units[unitIndex]}`
+          }
 
           const targets = JSON.parse(process.env.ALL_TARGETS_JSON).map((target) => ({
             platform: target.platform_name,
@@ -2151,6 +2470,7 @@ jobs:
 
           const artifactRoot = path.resolve('report-artifacts')
           const manifests = []
+          const inspectionFiles = []
 
           const walk = (dir) => {
             if (!fs.existsSync(dir)) {
@@ -2162,6 +2482,8 @@ jobs:
                 walk(full)
               } else if (entry.isFile() && entry.name === 'build-manifest.json') {
                 manifests.push(full)
+              } else if (entry.isFile() && entry.name === 'package-content-summary.json') {
+                inspectionFiles.push(full)
               }
             }
           }
@@ -2172,6 +2494,21 @@ jobs:
           for (const filePath of manifests) {
             const data = JSON.parse(fs.readFileSync(filePath, 'utf8'))
             manifestMap.set(`${data.platform}-${data.arch}`, data)
+          }
+
+          const inspectionMap = new Map()
+          for (const filePath of inspectionFiles) {
+            const data = JSON.parse(fs.readFileSync(filePath, 'utf8'))
+            const key = `${data.platform}-${data.arch}`
+            const list = inspectionMap.get(key) || []
+            list.push(data)
+            inspectionMap.set(key, list)
+          }
+          for (const [key, list] of inspectionMap.entries()) {
+            inspectionMap.set(
+              key,
+              list.sort((left, right) => left.kind.localeCompare(right.kind))
+            )
           }
 
           const rows = targets.map((target) => {
@@ -2206,6 +2543,9 @@ jobs:
           const missingSupported = rows.filter(
             (row) => row.supported && row.planned && !row.artifactProduced
           )
+          const missingInspections = rows.filter(
+            (row) => row.artifactProduced && (inspectionMap.get(`${row.platform}-${row.arch}`) || []).length === 0
+          )
 
           const notes = [
             '# Workflow Report',
@@ -2231,6 +2571,37 @@ jobs:
             }
           }
 
+          const contentAuditRows = []
+          notes.push('', '## Packaged Content Audit')
+          if (inspectionFiles.length === 0) {
+            notes.push('- WARN No package content summaries were discovered.')
+          } else {
+            notes.push('| Target | Kind | Files | app.asar | Electron Locales | Resources | mpv | Forbidden |')
+            notes.push('| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |')
+            for (const row of rows) {
+              const summaries = inspectionMap.get(`${row.platform}-${row.arch}`) || []
+              for (const summary of summaries) {
+                contentAuditRows.push({
+                  target: `${row.platform}-${row.arch}`,
+                  kind: summary.kind,
+                  source_file: summary.source_file,
+                  file_count: summary.file_count,
+                  total_bytes: summary.total_bytes,
+                  app_asar_bytes: summary.app_asar_bytes,
+                  electron_locales_total_bytes: summary.electron_locales_total_bytes,
+                  resources_total_bytes: summary.resources_total_bytes,
+                  mpv_total_bytes: summary.mpv_total_bytes,
+                  forbidden_path_count: (summary.forbidden_paths || []).length,
+                  top_files: summary.top_files || [],
+                  top_directories: summary.top_directories || [],
+                })
+                notes.push(
+                  `| ${row.platform}-${row.arch} | ${summary.kind} | ${summary.file_count} | ${formatBytes(summary.app_asar_bytes)} | ${formatBytes(summary.electron_locales_total_bytes)} | ${formatBytes(summary.resources_total_bytes)} | ${formatBytes(summary.mpv_total_bytes)} | ${(summary.forbidden_paths || []).length} |`
+                )
+              }
+            }
+          }
+
           fs.writeFileSync(path.join('report-output', 'workflow-report.md'), `${notes.join('\n')}\n`)
           fs.writeFileSync(
             path.join('report-output', 'workflow-report.json'),
@@ -2241,21 +2612,43 @@ jobs:
                 git_ref: githubRef,
                 git_sha: githubSha,
                 rows,
+                content_audit_rows: contentAuditRows,
               },
               null,
               2
             ) + '\n'
+          )
+          fs.writeFileSync(
+            path.join('report-output', 'package-content-audit.json'),
+            JSON.stringify(contentAuditRows, null, 2) + '\n'
+          )
+          fs.writeFileSync(
+            path.join('report-output', 'package-content-audit.md'),
+            `${notes.slice(notes.indexOf('## Packaged Content Audit')).join('\n')}\n`
           )
 
           if (summaryPath) {
             fs.appendFileSync(summaryPath, `${notes.join('\n')}\n`)
           }
 
-          if (missingSupported.length > 0) {
+          if (missingSupported.length > 0 || missingInspections.length > 0) {
+            const messages = []
+            if (missingSupported.length > 0) {
+              messages.push(
+                `Supported targets missing artifacts: ${missingSupported
+                  .map((row) => `${row.platform}-${row.arch}`)
+                  .join(', ')}`
+              )
+            }
+            if (missingInspections.length > 0) {
+              messages.push(
+                `Produced targets missing content inspections: ${missingInspections
+                  .map((row) => `${row.platform}-${row.arch}`)
+                  .join(', ')}`
+              )
+            }
             console.error(
-              `Supported targets missing artifacts: ${missingSupported
-                .map((row) => `${row.platform}-${row.arch}`)
-                .join(', ')}`
+              messages.join('\n')
             )
             process.exit(1)
           }
