@@ -279,6 +279,9 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y build-essential python3 ruby ruby-dev rpm fakeroot libarchive-tools mpv dpkg desktop-file-utils squashfs-tools xz-utils
           sudo gem install --no-document fpm
+          ruby --version
+          gem --version
+          fpm --version
 
       - name: Provision Windows mpv runtime
         if: runner.os == 'Windows'
@@ -539,6 +542,10 @@ jobs:
           const platformName = process.env.NSMUSICS_ELECTRON_PLATFORM
           const archName = process.env.NSMUSICS_ELECTRON_ARCH
           const mode = process.argv[2] || 'package'
+          const targetOverride = (process.env.NSMUSICS_ELECTRON_TARGETS || '')
+            .split(',')
+            .map((value) => value.trim())
+            .filter(Boolean)
 
           const archMap = {
             x64: electronBuilder.Arch.x64,
@@ -570,7 +577,12 @@ jobs:
             throw new Error(`Unsupported NSMUSICS_ELECTRON_PLATFORM: ${platformName}`)
           }
 
-          const requestedTargets = mode === 'dir' ? targetMap.dir : targetMap[platformName]
+          const requestedTargets =
+            mode === 'dir'
+              ? targetMap.dir
+              : targetOverride.length > 0
+                ? targetOverride
+                : targetMap[platformName]
           const targets = builderPlatform.createTarget(requestedTargets, builderArch)
 
           const baseConfig = {
@@ -656,6 +668,7 @@ jobs:
                 mode,
                 platformName,
                 archName,
+                targetOverride,
                 configuredTargets: {
                   win: builderConfig.win.target || null,
                   linux: builderConfig.linux.target || null,
@@ -1461,13 +1474,29 @@ jobs:
         env:
           NSMUSICS_ELECTRON_PLATFORM: ${{ matrix.platform }}
           NSMUSICS_ELECTRON_ARCH: ${{ matrix.arch }}
+          USE_SYSTEM_FPM: ${{ runner.os == 'Linux' && 'true' || '' }}
+          FPM_DEBUG: ${{ runner.os == 'Linux' && '1' || '' }}
         run: |
           $diagnosticsDir = '.github/workflows/.tmp/diagnostics'
           New-Item -ItemType Directory -Path $diagnosticsDir -Force | Out-Null
           $logPath = Join-Path $diagnosticsDir 'electron-builder-package.log'
-          node .github/workflows/.tmp/run-electron-builder.cjs package *>&1 | Tee-Object -FilePath $logPath
-          if ($LASTEXITCODE -ne 0) {
-            exit $LASTEXITCODE
+          if ('${{ matrix.platform }}' -eq 'linux' -and '${{ matrix.arch }}' -eq 'arm64') {
+            $targets = @('AppImage', 'deb', 'tar.gz')
+            foreach ($target in $targets) {
+              $safeTarget = $target.Replace('.', '_').Replace('/', '_')
+              $targetLogPath = Join-Path $diagnosticsDir ("electron-builder-$safeTarget.log")
+              $env:NSMUSICS_ELECTRON_TARGETS = $target
+              node .github/workflows/.tmp/run-electron-builder.cjs package *>&1 | Tee-Object -FilePath $targetLogPath
+              if ($LASTEXITCODE -ne 0) {
+                exit $LASTEXITCODE
+              }
+            }
+            Remove-Item Env:NSMUSICS_ELECTRON_TARGETS -ErrorAction SilentlyContinue
+          } else {
+            node .github/workflows/.tmp/run-electron-builder.cjs package *>&1 | Tee-Object -FilePath $logPath
+            if ($LASTEXITCODE -ne 0) {
+              exit $LASTEXITCODE
+            }
           }
 
       - name: Strict packaged native validation
