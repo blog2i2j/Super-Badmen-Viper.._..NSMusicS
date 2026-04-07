@@ -874,14 +874,12 @@ jobs:
             fail(`release output is empty under ${releaseDir}`)
           }
 
-          const rootFiles = releaseFiles.filter((targetPath) => path.dirname(targetPath) === releaseDir)
-
           fs.rmSync(bundleRoot, { recursive: true, force: true })
           fs.mkdirSync(publishDir, { recursive: true })
 
           const stagedAssets = []
           for (const assetSpec of spec.assets) {
-            const matches = rootFiles.filter((targetPath) => assetSpec.matches(fileBasename(targetPath)))
+            const matches = releaseFiles.filter((targetPath) => assetSpec.matches(fileBasename(targetPath)))
             if (matches.length !== 1) {
               fail(
                 `Expected exactly one ${platformLabel}-${archName} ${assetSpec.kind} asset, found ${matches.length}. Candidates: ${matches
@@ -911,6 +909,12 @@ jobs:
 
             if (assetSpec.kind === 'deb') {
               validateLinuxDebDepends(sourcePath)
+            }
+
+            if (path.dirname(sourcePath) !== releaseDir) {
+              appendSummary(
+                `- NOTE Packaged asset discovered below release root: ${relativeToRoot(sourcePath)}`
+              )
             }
 
             fs.copyFileSync(sourcePath, destinationPath)
