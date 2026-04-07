@@ -2368,25 +2368,14 @@ jobs:
             local attempt=1
             local max_attempts=5
             local sleep_seconds=10
-            local list_match
-            local page
             local stderr_file
             stderr_file="$(mktemp)"
 
             while true; do
-              if gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${target_tag}" >/dev/null 2>"${stderr_file}"; then
+              if gh release view "${target_tag}" --json databaseId >/dev/null 2>"${stderr_file}"; then
                 rm -f "${stderr_file}"
                 return 0
               fi
-
-              for page in 1 2 3 4 5; do
-                if list_match="$(gh api "repos/${GITHUB_REPOSITORY}/releases?per_page=100&page=${page}" --jq ".[] | select(.tag_name == \"${target_tag}\") | .id" 2>"${stderr_file}")"; then
-                  if [ -n "${list_match}" ]; then
-                    rm -f "${stderr_file}"
-                    return 0
-                  fi
-                fi
-              done
 
               if grep -Eq 'HTTP 404|Not Found' "${stderr_file}"; then
                 rm -f "${stderr_file}"
