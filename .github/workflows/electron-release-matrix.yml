@@ -20,6 +20,7 @@ on:
     tags:
       - "v*"
       - "electron-v*"
+      - "NSMusicS-v*"
 
 concurrency:
   group: electron-release-${{ github.ref }}
@@ -109,7 +110,7 @@ jobs:
               runner: 'ubuntu-24.04-arm',
               supported: true,
               support_reason:
-                'The workflow uses a native Ubuntu arm64 runner, installs system mpv, rebuilds Electron native modules, and publishes a Linux arm64 tar.gz package.',
+                'The workflow uses a native Ubuntu arm64 runner, installs system mpv, rebuilds Electron native modules, and publishes Linux arm64 AppImage, deb, and tar.gz assets.',
             },
             {
               platform: 'mac',
@@ -189,6 +190,40 @@ jobs:
             echo "- PASS package-lock.json is present."
           } >> "${GITHUB_STEP_SUMMARY}"
 
+      - name: Verify release tag matches package version
+        if: ${{ startsWith(github.ref, 'refs/tags/') }}
+        working-directory: NSMusicS-Electron
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          raw_tag="${GITHUB_REF_NAME}"
+          normalized_tag="${raw_tag}"
+          normalized_tag="${normalized_tag#electron-v}"
+          normalized_tag="${normalized_tag#NSMusicS-v}"
+          normalized_tag="${normalized_tag#v}"
+
+          package_version="$(node -p "require('./package.json').version")"
+
+          {
+            echo "## Release Tag Policy"
+            echo "- Raw tag: ${raw_tag}"
+            echo "- Normalized tag version: ${normalized_tag}"
+            echo "- package.json version: ${package_version}"
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+          if [ -z "${normalized_tag}" ]; then
+            echo "::error title=Release Policy::Unable to normalize release tag version from ${raw_tag}."
+            exit 1
+          fi
+
+          if [ "${normalized_tag}" != "${package_version}" ]; then
+            echo "::error title=Release Policy::Tag version ${normalized_tag} does not match package.json version ${package_version}."
+            exit 1
+          fi
+
+          echo "- PASS release tag version matches package.json." >> "${GITHUB_STEP_SUMMARY}"
+
   build:
     name: Build ${{ matrix.platform_name }}-${{ matrix.arch }}
     needs:
@@ -242,7 +277,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential python3 ruby ruby-dev rpm fakeroot libarchive-tools mpv
+          sudo apt-get install -y build-essential python3 ruby ruby-dev rpm fakeroot libarchive-tools mpv dpkg desktop-file-utils squashfs-tools xz-utils
           sudo gem install --no-document fpm
 
       - name: Provision Windows mpv runtime
@@ -520,9 +555,9 @@ jobs:
 
           const targetMap = {
             dir: ['dir'],
-            win: ['nsis'],
-            linux: ['AppImage', 'deb'],
-            mac: ['dmg'],
+            win: ['nsis', 'zip'],
+            linux: ['AppImage', 'deb', 'tar.gz'],
+            mac: ['dmg', 'zip'],
           }
 
           const builderArch = archMap[archName]
@@ -535,12 +570,7 @@ jobs:
             throw new Error(`Unsupported NSMUSICS_ELECTRON_PLATFORM: ${platformName}`)
           }
 
-          const requestedTargets =
-            mode === 'dir'
-              ? targetMap.dir
-              : platformName === 'linux' && archName === 'arm64'
-                ? ['tar.gz']
-                : targetMap[platformName]
+          const requestedTargets = mode === 'dir' ? targetMap.dir : targetMap[platformName]
           const targets = builderPlatform.createTarget(requestedTargets, builderArch)
 
           console.log(
@@ -560,22 +590,23 @@ jobs:
                 },
                 asar: true,
                 win: {
-                  target: 'nsis',
+                  target: ['nsis', 'zip'],
                   icon: 'resources/config/NSMusicS.ico',
                   artifactName: '${productName}-Win-${version}-${arch}.${ext}',
                 },
                 linux: {
-                  target: ['AppImage', 'deb'],
+                  target: ['AppImage', 'deb', 'tar.gz'],
                   icon: 'resources/config/png',
                   desktop: {
                     Icon: '/usr/share/icons/hicolor/512x512/apps/nsmusics.png',
                   },
+                  depends: ['mpv'],
                   category: 'Audio',
                   maintainer: 'Xiang Cheng 1774148579@qq.com',
                   artifactName: '${productName}-Linux-${version}-${arch}.${ext}',
                 },
                 mac: {
-                  target: 'dmg',
+                  target: ['dmg', 'zip'],
                   icon: 'resources/config/NSMusicS.icns',
                   artifactName: '${productName}-Mac-${version}-${arch}.${ext}',
                   hardenedRuntime: true,
@@ -607,6 +638,263 @@ jobs:
               process.exit(1)
             })
           '@ | Set-Content -Path .github/workflows/.tmp/run-electron-builder.cjs -Encoding utf8
+
+          @'
+          const childProcess = require('node:child_process')
+          const fs = require('node:fs')
+          const path = require('node:path')
+
+          const productName = 'NSMusicS'
+          const rootDir = process.cwd()
+          const releaseDir = path.join(rootDir, 'release')
+          const packageJsonPath = path.join(rootDir, 'package.json')
+          const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf8'))
+          const version = packageJson.version
+          const platformName = process.env.NSMUSICS_ELECTRON_PLATFORM
+          const platformLabel = process.env.NSMUSICS_PLATFORM_NAME || platformName
+          const archName = process.env.NSMUSICS_ELECTRON_ARCH
+          const buildMode = process.env.NSMUSICS_BUILD_MODE || 'supported-only'
+          const artifactPrefix = process.env.NSMUSICS_ARTIFACT_PREFIX || 'nsmusics-electron'
+          const supported = process.env.NSMUSICS_TARGET_SUPPORTED || ''
+          const supportReason = process.env.NSMUSICS_SUPPORT_REASON || ''
+          const bundleRoot = path.join(
+            rootDir,
+            '.github',
+            'workflows',
+            '.out',
+            buildMode,
+            `${platformLabel}-${archName}`
+          )
+          const publishDir = path.join(bundleRoot, 'publish')
+          const summaryPath = process.env.GITHUB_STEP_SUMMARY
+          const megabyte = 1024 * 1024
+
+          const appendSummary = (message) => {
+            if (!summaryPath) {
+              return
+            }
+            fs.appendFileSync(summaryPath, `${message}\n`)
+          }
+
+          const fail = (message) => {
+            appendSummary(`- FAIL ${message}`)
+            console.error(`::error title=Publish Asset Staging::${message.replace(/\r?\n/g, ' ')}`)
+            throw new Error(message)
+          }
+
+          const runCommand = (command, args) => {
+            const result = childProcess.spawnSync(command, args, {
+              cwd: rootDir,
+              encoding: 'utf8',
+            })
+            if (result.status !== 0) {
+              fail(
+                `Command failed: ${command} ${args.join(' ')}\n${(result.stderr || result.stdout || '').trim()}`
+              )
+            }
+            return result.stdout || ''
+          }
+
+          const walkFiles = (dirPath) => {
+            if (!fs.existsSync(dirPath)) {
+              fail(`release output directory not found: ${dirPath}`)
+            }
+            return fs.readdirSync(dirPath, { withFileTypes: true }).flatMap((entry) => {
+              const fullPath = path.join(dirPath, entry.name)
+              return entry.isDirectory() ? walkFiles(fullPath) : [fullPath]
+            })
+          }
+
+          const relativeToRoot = (targetPath) => path.relative(rootDir, targetPath).replace(/\\/g, '/')
+          const relativeToBundle = (targetPath) => path.relative(bundleRoot, targetPath).replace(/\\/g, '/')
+          const fileBasename = (targetPath) => path.basename(targetPath)
+
+          const baseSpecs = {
+            win: {
+              packageLabel: 'Win',
+              assets: [
+                {
+                  kind: 'exe',
+                  minBytes: 120 * megabyte,
+                  maxBytes: 260 * megabyte,
+                  matches: (value) => value.endsWith('.exe') && !value.endsWith('.exe.blockmap'),
+                  outputName: () => `${productName}-Win-${version}-${archName}.exe`,
+                },
+                {
+                  kind: 'exe_blockmap',
+                  minBytes: 32 * 1024,
+                  maxBytes: 1 * megabyte,
+                  matches: (value) => value.endsWith('.exe.blockmap'),
+                  outputName: () => `${productName}-Win-${version}-${archName}.exe.blockmap`,
+                },
+                {
+                  kind: 'zip',
+                  minBytes: 150 * megabyte,
+                  maxBytes: 320 * megabyte,
+                  matches: (value) => value.endsWith('.zip'),
+                  outputName: () => `${productName}-Win-${version}-${archName}.zip`,
+                },
+              ],
+            },
+            linux: {
+              packageLabel: 'Linux',
+              assets: [
+                {
+                  kind: 'deb',
+                  minBytes: 70 * megabyte,
+                  maxBytes: 180 * megabyte,
+                  matches: (value) => value.endsWith('.deb'),
+                  outputName: () =>
+                    `${productName}-Linux-${version}-${archName === 'x64' ? 'amd64' : archName}.deb`,
+                },
+                {
+                  kind: 'targz',
+                  minBytes: 110 * megabyte,
+                  maxBytes: 260 * megabyte,
+                  matches: (value) => value.endsWith('.tar.gz'),
+                  outputName: () => `${productName}-Linux-${version}-${archName}.tar.gz`,
+                },
+                {
+                  kind: 'appimage',
+                  minBytes: 110 * megabyte,
+                  maxBytes: 260 * megabyte,
+                  matches: (value) => value.endsWith('.AppImage'),
+                  outputName: () =>
+                    `${productName}-Linux-${version}-${archName === 'x64' ? 'x86_64' : archName}.AppImage`,
+                },
+              ],
+            },
+            mac: {
+              packageLabel: 'Mac',
+              assets: [
+                {
+                  kind: 'dmg',
+                  minBytes: 130 * megabyte,
+                  maxBytes: 320 * megabyte,
+                  matches: (value) => value.endsWith('.dmg') && !value.endsWith('.dmg.blockmap'),
+                  outputName: () => `${productName}-Mac-${version}-${archName}.dmg`,
+                },
+                {
+                  kind: 'dmg_blockmap',
+                  minBytes: 32 * 1024,
+                  maxBytes: 1 * megabyte,
+                  matches: (value) => value.endsWith('.dmg.blockmap'),
+                  outputName: () => `${productName}-Mac-${version}-${archName}.dmg.blockmap`,
+                },
+                {
+                  kind: 'zip',
+                  minBytes: 130 * megabyte,
+                  maxBytes: 320 * megabyte,
+                  matches: (value) => value.endsWith('.zip'),
+                  outputName: () => `${productName}-Mac-${version}-${archName}.zip`,
+                },
+              ],
+            },
+          }
+
+          const validateLinuxDebDepends = (debPath) => {
+            if (platformName !== 'linux') {
+              return
+            }
+            const dependsLine = runCommand('dpkg-deb', ['-f', debPath, 'Depends']).trim()
+            if (!/\bmpv\b/.test(dependsLine)) {
+              fail(`Linux deb package does not declare required mpv dependency: ${relativeToRoot(debPath)}`)
+            }
+            appendSummary(`- PASS Linux deb dependency metadata includes mpv: ${path.basename(debPath)}`)
+          }
+
+          const spec = baseSpecs[platformName]
+          if (!spec) {
+            fail(`Unsupported publish asset staging platform label: ${platformLabel}`)
+          }
+
+          const releaseFiles = walkFiles(releaseDir)
+          if (releaseFiles.length === 0) {
+            fail(`release output is empty under ${releaseDir}`)
+          }
+
+          const rootFiles = releaseFiles.filter((targetPath) => path.dirname(targetPath) === releaseDir)
+
+          fs.rmSync(bundleRoot, { recursive: true, force: true })
+          fs.mkdirSync(publishDir, { recursive: true })
+
+          const stagedAssets = []
+          for (const assetSpec of spec.assets) {
+            const matches = rootFiles.filter((targetPath) => assetSpec.matches(fileBasename(targetPath)))
+            if (matches.length !== 1) {
+              fail(
+                `Expected exactly one ${platformLabel}-${archName} ${assetSpec.kind} asset, found ${matches.length}. Candidates: ${matches
+                  .map((targetPath) => relativeToRoot(targetPath))
+                  .join(', ')}`
+              )
+            }
+
+            const sourcePath = matches[0]
+            const outputName = assetSpec.outputName()
+            const destinationPath = path.join(publishDir, outputName)
+            const sizeBytes = fs.statSync(sourcePath).size
+
+            if (sizeBytes <= 0) {
+              fail(`Publish asset is empty: ${relativeToRoot(sourcePath)}`)
+            }
+            if (sizeBytes < assetSpec.minBytes) {
+              fail(
+                `Publish asset ${relativeToRoot(sourcePath)} is ${sizeBytes} bytes, which is below the ${assetSpec.minBytes} byte minimum for ${assetSpec.kind}.`
+              )
+            }
+            if (sizeBytes > assetSpec.maxBytes) {
+              fail(
+                `Publish asset ${relativeToRoot(sourcePath)} is ${sizeBytes} bytes, which exceeds the ${assetSpec.maxBytes} byte limit for ${assetSpec.kind}.`
+              )
+            }
+
+            if (assetSpec.kind === 'deb') {
+              validateLinuxDebDepends(sourcePath)
+            }
+
+            fs.copyFileSync(sourcePath, destinationPath)
+            stagedAssets.push({
+              kind: assetSpec.kind,
+              source_name: fileBasename(sourcePath),
+              file_name: outputName,
+              size_bytes: sizeBytes,
+              relative_path: relativeToBundle(destinationPath),
+            })
+          }
+
+          const manifest = {
+            artifact_name: `${artifactPrefix}-${buildMode}-${platformLabel}-${archName}`,
+            build_mode: buildMode,
+            version,
+            platform: platformLabel,
+            platform_id: platformName,
+            arch: archName,
+            supported,
+            support_reason: supportReason,
+            ref: process.env.GITHUB_REF || '',
+            sha: process.env.GITHUB_SHA || '',
+            run_id: process.env.GITHUB_RUN_ID || '',
+            release_files: releaseFiles.map(relativeToRoot).sort(),
+            publish_assets: stagedAssets.map((asset) => asset.relative_path),
+            publish_asset_details: stagedAssets,
+          }
+
+          const inventoryPath = path.join(bundleRoot, 'publish-assets.txt')
+          const manifestPath = path.join(bundleRoot, 'build-manifest.json')
+          fs.writeFileSync(
+            inventoryPath,
+            stagedAssets
+              .map((asset) => `${asset.file_name}\t${asset.size_bytes}\t${asset.kind}`)
+              .join('\n') + '\n'
+          )
+          fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2) + '\n')
+
+          appendSummary(`- Upload artifact: ${manifest.artifact_name}`)
+          appendSummary(`- Publishable assets: ${stagedAssets.length}`)
+          for (const asset of stagedAssets) {
+            appendSummary(`- Asset: ${asset.file_name} (${asset.size_bytes} bytes)`)
+          }
+          '@ | Set-Content -Path .github/workflows/.tmp/stage-publish-assets.cjs -Encoding utf8
 
           @'
           const childProcess = require('node:child_process')
@@ -1144,44 +1432,24 @@ jobs:
           node -e "const fs=require('fs'); const path=require('path'); const root='release'; const walk=(dir)=>fs.readdirSync(dir,{withFileTypes:true}).flatMap((entry)=>{const full=path.join(dir,entry.name); return entry.isDirectory()?walk(full):[full]}); if(!fs.existsSync(root)){throw new Error('release output not found')} const files=walk(root); if(files.length===0){throw new Error('release output is empty')} console.log(files.join('\n'));"
 
       - name: Stage upload bundle
-        run: |
-          $artifactName = "${{ env.ARTIFACT_PREFIX }}-${{ env.BUILD_MODE }}-${{ matrix.platform_name }}-${{ matrix.arch }}"
-          $bundleRoot = Join-Path $PWD ".github/workflows/.out/${{ env.BUILD_MODE }}/${{ matrix.platform_name }}-${{ matrix.arch }}"
-          if (Test-Path $bundleRoot) {
-            Remove-Item -LiteralPath $bundleRoot -Recurse -Force
-          }
-          New-Item -ItemType Directory -Path $bundleRoot -Force | Out-Null
-          Copy-Item -LiteralPath release -Destination (Join-Path $bundleRoot "release") -Recurse
-          $publishFiles = Get-ChildItem release -File | Where-Object {
-            $_.Name -notin @('builder-debug.yml', 'builder-effective-config.yaml', 'log.txt')
-          } | ForEach-Object {
-            "release/$($_.Name)"
-          }
-          $manifest = [ordered]@{
-            artifact_name = $artifactName
-            build_mode = "${{ env.BUILD_MODE }}"
-            platform = "${{ matrix.platform_name }}"
-            platform_id = "${{ matrix.platform }}"
-            arch = "${{ matrix.arch }}"
-            supported = "${{ matrix.supported }}"
-            support_reason = "${{ matrix.support_reason }}"
-            ref = "${{ github.ref }}"
-            sha = "${{ github.sha }}"
-            run_id = "${{ github.run_id }}"
-            release_files = Get-ChildItem release -Recurse -File | ForEach-Object {
-              $_.FullName.Substring($PWD.Path.Length + 1).Replace('\', '/')
-            }
-            publish_assets = $publishFiles
-          } | ConvertTo-Json -Depth 6
-          Set-Content -LiteralPath (Join-Path $bundleRoot "build-manifest.json") -Value $manifest -Encoding utf8
-          Add-Content $env:GITHUB_STEP_SUMMARY "- Upload artifact: $artifactName"
-          Add-Content $env:GITHUB_STEP_SUMMARY "- Publishable assets: $($publishFiles.Count)"
+        env:
+          NSMUSICS_ELECTRON_PLATFORM: ${{ matrix.platform }}
+          NSMUSICS_PLATFORM_NAME: ${{ matrix.platform_name }}
+          NSMUSICS_ELECTRON_ARCH: ${{ matrix.arch }}
+          NSMUSICS_BUILD_MODE: ${{ env.BUILD_MODE }}
+          NSMUSICS_ARTIFACT_PREFIX: ${{ env.ARTIFACT_PREFIX }}
+          NSMUSICS_TARGET_SUPPORTED: ${{ matrix.supported }}
+          NSMUSICS_SUPPORT_REASON: ${{ matrix.support_reason }}
+        run: node .github/workflows/.tmp/stage-publish-assets.cjs
 
       - name: Upload packaged artifacts
         uses: actions/upload-artifact@v4
         with:
           name: ${{ env.ARTIFACT_PREFIX }}-${{ env.BUILD_MODE }}-${{ matrix.platform_name }}-${{ matrix.arch }}
-          path: NSMusicS-Electron/.github/workflows/.out/${{ env.BUILD_MODE }}/${{ matrix.platform_name }}-${{ matrix.arch }}/**
+          path: |
+            NSMusicS-Electron/.github/workflows/.out/${{ env.BUILD_MODE }}/${{ matrix.platform_name }}-${{ matrix.arch }}/build-manifest.json
+            NSMusicS-Electron/.github/workflows/.out/${{ env.BUILD_MODE }}/${{ matrix.platform_name }}-${{ matrix.arch }}/publish-assets.txt
+            NSMusicS-Electron/.github/workflows/.out/${{ env.BUILD_MODE }}/${{ matrix.platform_name }}-${{ matrix.arch }}/publish/**
           if-no-files-found: error
           compression-level: 0
           retention-days: 21
@@ -1399,6 +1667,20 @@ jobs:
           const fs = require('node:fs')
           const path = require('node:path')
 
+          const formatBytes = (value) => {
+            if (value < 1024) {
+              return `${value} B`
+            }
+            const units = ['KB', 'MB', 'GB']
+            let size = value
+            let unitIndex = -1
+            do {
+              size /= 1024
+              unitIndex += 1
+            } while (size >= 1024 && unitIndex < units.length - 1)
+            return `${size.toFixed(size >= 100 ? 0 : size >= 10 ? 1 : 2)} ${units[unitIndex]}`
+          }
+
           const root = path.resolve('release-artifacts')
           const manifests = []
 
@@ -1426,7 +1708,11 @@ jobs:
               const publishAssets = (data.publish_assets || []).map((relativePath) =>
                 path.join(artifactRoot, relativePath)
               )
-              return { ...data, artifactRoot, publishAssets }
+              const publishAssetDetails = (data.publish_asset_details || []).map((asset) => ({
+                ...asset,
+                absolute_path: path.join(artifactRoot, asset.relative_path),
+              }))
+              return { ...data, artifactRoot, publishAssets, publishAssetDetails }
             })
             .sort((left, right) =>
               `${left.platform}-${left.arch}`.localeCompare(`${right.platform}-${right.arch}`)
@@ -1448,6 +1734,9 @@ jobs:
             notes.push(`  Support note: ${entry.support_reason}`)
             if (!entry.publishAssets.length) {
               throw new Error(`No publish assets were declared for ${entry.platform}-${entry.arch}`)
+            }
+            for (const asset of entry.publishAssetDetails) {
+              notes.push(`  Asset: ${asset.file_name} (${formatBytes(asset.size_bytes)})`)
             }
             for (const assetPath of entry.publishAssets) {
               if (!fs.existsSync(assetPath)) {
