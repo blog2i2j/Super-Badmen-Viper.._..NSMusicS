@@ -856,28 +856,75 @@ jobs:
           const relativeToBundle = (targetPath) => path.relative(bundleRoot, targetPath).replace(/\\/g, '/')
           const fileBasename = (targetPath) => path.basename(targetPath)
 
+          const expectedSizeProfiles = {
+            win: {
+              x64: {
+                exe: { minBytes: 135 * megabyte, maxBytes: 175 * megabyte },
+                exe_blockmap: { minBytes: 120 * 1024, maxBytes: 320 * 1024 },
+                zip: { minBytes: 180 * megabyte, maxBytes: 230 * megabyte },
+              },
+            },
+            linux: {
+              x64: {
+                deb: { minBytes: 85 * megabyte, maxBytes: 120 * megabyte },
+                targz: { minBytes: 140 * megabyte, maxBytes: 175 * megabyte },
+                appimage: { minBytes: 140 * megabyte, maxBytes: 175 * megabyte },
+              },
+              arm64: {
+                deb: { minBytes: 80 * megabyte, maxBytes: 125 * megabyte },
+                targz: { minBytes: 130 * megabyte, maxBytes: 185 * megabyte },
+                appimage: { minBytes: 130 * megabyte, maxBytes: 185 * megabyte },
+              },
+            },
+            mac: {
+              x64: {
+                dmg: { minBytes: 180 * megabyte, maxBytes: 215 * megabyte },
+                dmg_blockmap: { minBytes: 120 * 1024, maxBytes: 350 * 1024 },
+                zip: { minBytes: 180 * megabyte, maxBytes: 215 * megabyte },
+              },
+              arm64: {
+                dmg: { minBytes: 150 * megabyte, maxBytes: 185 * megabyte },
+                dmg_blockmap: { minBytes: 120 * 1024, maxBytes: 320 * 1024 },
+                zip: { minBytes: 150 * megabyte, maxBytes: 185 * megabyte },
+              },
+            },
+          }
+
+          const resolveSizeProfile = (platformName, archName, kind) => {
+            const platformProfiles = expectedSizeProfiles[platformName]
+            if (!platformProfiles) {
+              throw new Error(`Missing size profile platform: ${platformName}`)
+            }
+
+            const archProfiles = platformProfiles[archName]
+            if (!archProfiles) {
+              throw new Error(`Missing size profile arch: ${platformName}-${archName}`)
+            }
+
+            const profile = archProfiles[kind]
+            if (!profile) {
+              throw new Error(`Missing size profile kind: ${platformName}-${archName}-${kind}`)
+            }
+
+            return profile
+          }
+
           const baseSpecs = {
             win: {
               packageLabel: 'Win',
               assets: [
                 {
                   kind: 'exe',
-                  minBytes: 120 * megabyte,
-                  maxBytes: 260 * megabyte,
                   matches: (value) => value.endsWith('.exe') && !value.endsWith('.exe.blockmap'),
                   outputName: () => `${productName}-Win-${version}-${archName}.exe`,
                 },
                 {
                   kind: 'exe_blockmap',
-                  minBytes: 32 * 1024,
-                  maxBytes: 1 * megabyte,
                   matches: (value) => value.endsWith('.exe.blockmap'),
                   outputName: () => `${productName}-Win-${version}-${archName}.exe.blockmap`,
                 },
                 {
                   kind: 'zip',
-                  minBytes: 150 * megabyte,
-                  maxBytes: 320 * megabyte,
                   matches: (value) => value.endsWith('.zip'),
                   outputName: () => `${productName}-Win-${version}-${archName}.zip`,
                 },
@@ -888,23 +935,17 @@ jobs:
               assets: [
                 {
                   kind: 'deb',
-                  minBytes: 70 * megabyte,
-                  maxBytes: 180 * megabyte,
                   matches: (value) => value.endsWith('.deb'),
                   outputName: () =>
                     `${productName}-Linux-${version}-${archName === 'x64' ? 'amd64' : archName}.deb`,
                 },
                 {
                   kind: 'targz',
-                  minBytes: 110 * megabyte,
-                  maxBytes: 260 * megabyte,
                   matches: (value) => value.endsWith('.tar.gz'),
                   outputName: () => `${productName}-Linux-${version}-${archName}.tar.gz`,
                 },
                 {
                   kind: 'appimage',
-                  minBytes: 110 * megabyte,
-                  maxBytes: 260 * megabyte,
                   matches: (value) => value.endsWith('.AppImage'),
                   outputName: () =>
                     `${productName}-Linux-${version}-${archName === 'x64' ? 'x86_64' : archName}.AppImage`,
@@ -916,22 +957,16 @@ jobs:
               assets: [
                 {
                   kind: 'dmg',
-                  minBytes: 130 * megabyte,
-                  maxBytes: 320 * megabyte,
                   matches: (value) => value.endsWith('.dmg') && !value.endsWith('.dmg.blockmap'),
                   outputName: () => `${productName}-Mac-${version}-${archName}.dmg`,
                 },
                 {
                   kind: 'dmg_blockmap',
-                  minBytes: 32 * 1024,
-                  maxBytes: 1 * megabyte,
                   matches: (value) => value.endsWith('.dmg.blockmap'),
                   outputName: () => `${productName}-Mac-${version}-${archName}.dmg.blockmap`,
                 },
                 {
                   kind: 'zip',
-                  minBytes: 130 * megabyte,
-                  maxBytes: 320 * megabyte,
                   matches: (value) => value.endsWith('.zip'),
                   outputName: () => `${productName}-Mac-${version}-${archName}.zip`,
                 },
@@ -994,18 +1029,19 @@ jobs:
             const outputName = assetSpec.outputName()
             const destinationPath = path.join(publishDir, outputName)
             const sizeBytes = fs.statSync(sourcePath).size
+            const sizeProfile = resolveSizeProfile(platformName, archName, assetSpec.kind)
 
             if (sizeBytes <= 0) {
               fail(`Publish asset is empty: ${relativeToRoot(sourcePath)}`)
             }
-            if (sizeBytes < assetSpec.minBytes) {
+            if (sizeBytes < sizeProfile.minBytes) {
               fail(
-                `Publish asset ${relativeToRoot(sourcePath)} is ${sizeBytes} bytes, which is below the ${assetSpec.minBytes} byte minimum for ${assetSpec.kind}.`
+                `Publish asset ${relativeToRoot(sourcePath)} is ${sizeBytes} bytes, which is below the ${sizeProfile.minBytes} byte minimum for ${platformLabel}-${archName} ${assetSpec.kind}.`
               )
             }
-            if (sizeBytes > assetSpec.maxBytes) {
+            if (sizeBytes > sizeProfile.maxBytes) {
               fail(
-                `Publish asset ${relativeToRoot(sourcePath)} is ${sizeBytes} bytes, which exceeds the ${assetSpec.maxBytes} byte limit for ${assetSpec.kind}.`
+                `Publish asset ${relativeToRoot(sourcePath)} is ${sizeBytes} bytes, which exceeds the ${sizeProfile.maxBytes} byte limit for ${platformLabel}-${archName} ${assetSpec.kind}.`
               )
             }
 
@@ -1020,13 +1056,15 @@ jobs:
             }
 
             fs.copyFileSync(sourcePath, destinationPath)
-            stagedAssets.push({
-              kind: assetSpec.kind,
-              source_name: fileBasename(sourcePath),
-              file_name: outputName,
-              size_bytes: sizeBytes,
-              relative_path: relativeToBundle(destinationPath),
-            })
+              stagedAssets.push({
+                kind: assetSpec.kind,
+                source_name: fileBasename(sourcePath),
+                file_name: outputName,
+                size_bytes: sizeBytes,
+                expected_min_bytes: sizeProfile.minBytes,
+                expected_max_bytes: sizeProfile.maxBytes,
+                relative_path: relativeToBundle(destinationPath),
+              })
           }
 
           const manifest = {
@@ -1056,10 +1094,12 @@ jobs:
           )
           fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2) + '\n')
 
-          appendSummary(`- Upload artifact: ${manifest.artifact_name}`)
+          appendSummary(`- Upload artifact bundle: ${manifest.artifact_name}`)
           appendSummary(`- Publishable assets: ${stagedAssets.length}`)
           for (const asset of stagedAssets) {
-            appendSummary(`- Asset: ${asset.file_name} (${asset.size_bytes} bytes)`)
+            appendSummary(
+              `- Asset: ${asset.file_name} (${asset.size_bytes} bytes, expected ${asset.expected_min_bytes}-${asset.expected_max_bytes})`
+            )
           }
           '@ | Set-Content -Path .github/workflows/.tmp/stage-publish-assets.cjs -Encoding utf8
 
@@ -1780,7 +1820,7 @@ jobs:
       - name: Upload packaged artifacts
         uses: actions/upload-artifact@v7
         with:
-          name: ${{ env.ARTIFACT_PREFIX }}-${{ env.BUILD_MODE }}-${{ matrix.platform_name }}-${{ matrix.arch }}
+          name: ${{ env.ARTIFACT_PREFIX }}-${{ env.BUILD_MODE }}-bundle-${{ matrix.platform_name }}-${{ matrix.arch }}
           path: |
             NSMusicS-Electron/.github/workflows/.out/${{ env.BUILD_MODE }}/${{ matrix.platform_name }}-${{ matrix.arch }}/build-manifest.json
             NSMusicS-Electron/.github/workflows/.out/${{ env.BUILD_MODE }}/${{ matrix.platform_name }}-${{ matrix.arch }}/publish-assets.txt
