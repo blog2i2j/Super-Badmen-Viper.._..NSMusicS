@@ -1481,7 +1481,7 @@ jobs:
         run: node .github/workflows/.tmp/stage-publish-assets.cjs
 
       - name: Upload packaged artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ${{ env.ARTIFACT_PREFIX }}-${{ env.BUILD_MODE }}-${{ matrix.platform_name }}-${{ matrix.arch }}
           path: |
@@ -1489,12 +1489,14 @@ jobs:
             NSMusicS-Electron/.github/workflows/.out/${{ env.BUILD_MODE }}/${{ matrix.platform_name }}-${{ matrix.arch }}/publish-assets.txt
             NSMusicS-Electron/.github/workflows/.out/${{ env.BUILD_MODE }}/${{ matrix.platform_name }}-${{ matrix.arch }}/publish/**
           if-no-files-found: error
+          include-hidden-files: true
+          overwrite: true
           compression-level: 0
           retention-days: 21
 
       - name: Upload failure diagnostics
         if: ${{ failure() }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ${{ env.ARTIFACT_PREFIX }}-failure-${{ env.BUILD_MODE }}-${{ matrix.platform_name }}-${{ matrix.arch }}
           path: |
@@ -1503,6 +1505,8 @@ jobs:
             NSMusicS-Electron/release/**/builder-debug.yml
             NSMusicS-Electron/release/**/builder-effective-config.yaml
           if-no-files-found: warn
+          include-hidden-files: true
+          overwrite: true
           compression-level: 0
           retention-days: 14
 
@@ -1521,7 +1525,7 @@ jobs:
     steps:
       - name: Download build artifacts
         continue-on-error: true
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           pattern: ${{ env.ARTIFACT_PREFIX }}-${{ needs.plan.outputs.build_mode }}-*
           path: report-artifacts
@@ -1667,10 +1671,11 @@ jobs:
 
       - name: Upload workflow report artifact
         if: ${{ always() }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ${{ env.ARTIFACT_PREFIX }}-report-${{ needs.plan.outputs.build_mode }}
           path: report-output/**
+          overwrite: true
           if-no-files-found: error
           retention-days: 21
 
@@ -1689,7 +1694,7 @@ jobs:
 
     steps:
       - name: Download build artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           pattern: ${{ env.ARTIFACT_PREFIX }}-${{ needs.plan.outputs.build_mode }}-*
           path: release-artifacts
