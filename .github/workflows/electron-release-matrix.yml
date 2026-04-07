@@ -568,12 +568,12 @@ jobs:
 
           const buildExtraResources = (platformName) => {
             const resources = [
-              { from: './resources/better_sqlite3.node', to: '.' },
-              { from: './resources/navidrome.db', to: '.' },
-              { from: './resources/nsmusics.db', to: '.' },
+              { from: './resources/better_sqlite3.node', to: 'better_sqlite3.node' },
+              { from: './resources/navidrome.db', to: 'navidrome.db' },
+              { from: './resources/nsmusics.db', to: 'nsmusics.db' },
               { from: './resources/icons', to: 'icons' },
-              { from: './resources/config/NSMusicS.ico', to: 'config' },
-              { from: './resources/config/png/256x256.png', to: 'config/png' },
+              { from: './resources/config/NSMusicS.ico', to: 'config/NSMusicS.ico' },
+              { from: './resources/config/png/256x256.png', to: 'config/png/256x256.png' },
             ]
 
             if (platformName === 'win') {
