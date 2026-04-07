@@ -2369,6 +2369,7 @@ jobs:
             local max_attempts=5
             local sleep_seconds=10
             local list_match
+            local page
             local stderr_file
             stderr_file="$(mktemp)"
 
@@ -2378,12 +2379,14 @@ jobs:
                 return 0
               fi
 
-              if list_match="$(gh api "repos/${GITHUB_REPOSITORY}/releases?per_page=100" --jq ".[] | select(.tag_name == \"${target_tag}\") | .id" 2>"${stderr_file}")"; then
-                if [ -n "${list_match}" ]; then
-                  rm -f "${stderr_file}"
-                  return 0
+              for page in 1 2 3 4 5; do
+                if list_match="$(gh api "repos/${GITHUB_REPOSITORY}/releases?per_page=100&page=${page}" --jq ".[] | select(.tag_name == \"${target_tag}\") | .id" 2>"${stderr_file}")"; then
+                  if [ -n "${list_match}" ]; then
+                    rm -f "${stderr_file}"
+                    return 0
+                  fi
                 fi
-              fi
+              done
 
               if grep -Eq 'HTTP 404|Not Found' "${stderr_file}"; then
                 rm -f "${stderr_file}"
@@ -2429,7 +2432,11 @@ jobs:
           fi
 
           if [ "${release_status}" -eq 0 ]; then
-            retry_gh release edit "${tag}" --notes-file release-artifacts/release-notes.md --title "${tag}"
+            if [ "${release_is_validation}" = true ]; then
+              retry_gh release edit "${tag}" --draft --notes-file release-artifacts/release-notes.md --title "${tag}"
+            else
+              retry_gh release edit "${tag}" --draft=false --prerelease=false --notes-file release-artifacts/release-notes.md --title "${tag}"
+            fi
             retry_gh release upload "${tag}" "${files[@]}" --clobber
             current_asset_names="$(retry_gh release view "${tag}" --json assets --jq '.assets[].name')"
             while IFS= read -r asset_name; do
@@ -2712,7 +2719,29 @@ jobs:
           GH_REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
-          gh release delete "${GITHUB_REF_NAME}" --yes
+
+          retry_delete() {
+            local attempt=1
+            local max_attempts=5
+            local sleep_seconds=10
+
+            while true; do
+              if gh release delete "${GITHUB_REF_NAME}" --yes; then
+                return 0
+              fi
+
+              if [ "${attempt}" -ge "${max_attempts}" ]; then
+                echo "Failed to delete validation release ${GITHUB_REF_NAME} after ${attempt} attempts." >&2
+                return 1
+              fi
+
+              echo "Validation release delete failed on attempt ${attempt}/${max_attempts}; retrying in ${sleep_seconds}s..." >&2
+              sleep "${sleep_seconds}"
+              attempt=$((attempt + 1))
+            done
+          }
+
+          retry_delete
           {
             echo "## Validation Cleanup"
             echo "- Deleted draft validation release: ${GITHUB_REF_NAME}"
