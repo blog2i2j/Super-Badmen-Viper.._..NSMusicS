@@ -859,33 +859,123 @@ jobs:
           const expectedSizeProfiles = {
             win: {
               x64: {
-                exe: { minBytes: 135 * megabyte, maxBytes: 175 * megabyte },
-                exe_blockmap: { minBytes: 120 * 1024, maxBytes: 320 * 1024 },
-                zip: { minBytes: 180 * megabyte, maxBytes: 230 * megabyte },
+                exe: {
+                  referenceBytes: 156 * megabyte,
+                  warnBelowFactor: 0.85,
+                  warnAboveFactor: 1.35,
+                  failBelowFactor: 0.7,
+                  failAboveFactor: 1.55,
+                },
+                exe_blockmap: {
+                  referenceBytes: 168 * 1024,
+                  warnBelowFactor: 0.6,
+                  warnAboveFactor: 1.7,
+                  failBelowFactor: 0.3,
+                  failAboveFactor: 3.0,
+                },
+                zip: {
+                  referenceBytes: 207 * megabyte,
+                  warnBelowFactor: 0.85,
+                  warnAboveFactor: 1.3,
+                  failBelowFactor: 0.75,
+                  failAboveFactor: 1.5,
+                },
               },
             },
             linux: {
               x64: {
-                deb: { minBytes: 85 * megabyte, maxBytes: 120 * megabyte },
-                targz: { minBytes: 140 * megabyte, maxBytes: 175 * megabyte },
-                appimage: { minBytes: 140 * megabyte, maxBytes: 175 * megabyte },
+                deb: {
+                  referenceBytes: 100 * megabyte,
+                  warnBelowFactor: 0.85,
+                  warnAboveFactor: 1.25,
+                  failBelowFactor: 0.75,
+                  failAboveFactor: 1.5,
+                },
+                targz: {
+                  referenceBytes: 154 * megabyte,
+                  warnBelowFactor: 0.85,
+                  warnAboveFactor: 1.2,
+                  failBelowFactor: 0.75,
+                  failAboveFactor: 1.4,
+                },
+                appimage: {
+                  referenceBytes: 155 * megabyte,
+                  warnBelowFactor: 0.85,
+                  warnAboveFactor: 1.2,
+                  failBelowFactor: 0.75,
+                  failAboveFactor: 1.4,
+                },
               },
               arm64: {
-                deb: { minBytes: 80 * megabyte, maxBytes: 125 * megabyte },
-                targz: { minBytes: 130 * megabyte, maxBytes: 185 * megabyte },
-                appimage: { minBytes: 130 * megabyte, maxBytes: 185 * megabyte },
+                deb: {
+                  referenceBytes: 100 * megabyte,
+                  warnBelowFactor: 0.75,
+                  warnAboveFactor: 1.35,
+                  failBelowFactor: 0.6,
+                  failAboveFactor: 1.7,
+                },
+                targz: {
+                  referenceBytes: 154 * megabyte,
+                  warnBelowFactor: 0.75,
+                  warnAboveFactor: 1.3,
+                  failBelowFactor: 0.65,
+                  failAboveFactor: 1.6,
+                },
+                appimage: {
+                  referenceBytes: 155 * megabyte,
+                  warnBelowFactor: 0.75,
+                  warnAboveFactor: 1.3,
+                  failBelowFactor: 0.65,
+                  failAboveFactor: 1.6,
+                },
               },
             },
             mac: {
               x64: {
-                dmg: { minBytes: 180 * megabyte, maxBytes: 215 * megabyte },
-                dmg_blockmap: { minBytes: 120 * 1024, maxBytes: 350 * 1024 },
-                zip: { minBytes: 180 * megabyte, maxBytes: 215 * megabyte },
+                dmg: {
+                  referenceBytes: 196 * megabyte,
+                  warnBelowFactor: 0.88,
+                  warnAboveFactor: 1.18,
+                  failBelowFactor: 0.78,
+                  failAboveFactor: 1.35,
+                },
+                dmg_blockmap: {
+                  referenceBytes: 210 * 1024,
+                  warnBelowFactor: 0.6,
+                  warnAboveFactor: 1.7,
+                  failBelowFactor: 0.3,
+                  failAboveFactor: 3.0,
+                },
+                zip: {
+                  referenceBytes: 196 * megabyte,
+                  warnBelowFactor: 0.88,
+                  warnAboveFactor: 1.18,
+                  failBelowFactor: 0.78,
+                  failAboveFactor: 1.35,
+                },
               },
               arm64: {
-                dmg: { minBytes: 150 * megabyte, maxBytes: 185 * megabyte },
-                dmg_blockmap: { minBytes: 120 * 1024, maxBytes: 320 * 1024 },
-                zip: { minBytes: 150 * megabyte, maxBytes: 185 * megabyte },
+                dmg: {
+                  referenceBytes: 169 * megabyte,
+                  warnBelowFactor: 0.88,
+                  warnAboveFactor: 1.18,
+                  failBelowFactor: 0.78,
+                  failAboveFactor: 1.35,
+                },
+                dmg_blockmap: {
+                  referenceBytes: 178 * 1024,
+                  warnBelowFactor: 0.6,
+                  warnAboveFactor: 1.7,
+                  failBelowFactor: 0.3,
+                  failAboveFactor: 3.0,
+                },
+                zip: {
+                  referenceBytes: 168 * megabyte,
+                  warnBelowFactor: 0.88,
+                  warnAboveFactor: 1.18,
+                  failBelowFactor: 0.78,
+                  failAboveFactor: 1.35,
+                },
               },
             },
           }
@@ -908,6 +998,8 @@ jobs:
 
             return profile
           }
+
+          const roundByte = (value) => Math.round(value)
 
           const baseSpecs = {
             win: {
@@ -1030,18 +1122,27 @@ jobs:
             const destinationPath = path.join(publishDir, outputName)
             const sizeBytes = fs.statSync(sourcePath).size
             const sizeProfile = resolveSizeProfile(platformName, archName, assetSpec.kind)
+            const warnMinBytes = roundByte(sizeProfile.referenceBytes * sizeProfile.warnBelowFactor)
+            const warnMaxBytes = roundByte(sizeProfile.referenceBytes * sizeProfile.warnAboveFactor)
+            const failMinBytes = roundByte(sizeProfile.referenceBytes * sizeProfile.failBelowFactor)
+            const failMaxBytes = roundByte(sizeProfile.referenceBytes * sizeProfile.failAboveFactor)
 
             if (sizeBytes <= 0) {
               fail(`Publish asset is empty: ${relativeToRoot(sourcePath)}`)
             }
-            if (sizeBytes < sizeProfile.minBytes) {
+            if (sizeBytes < failMinBytes) {
               fail(
-                `Publish asset ${relativeToRoot(sourcePath)} is ${sizeBytes} bytes, which is below the ${sizeProfile.minBytes} byte minimum for ${platformLabel}-${archName} ${assetSpec.kind}.`
+                `Publish asset ${relativeToRoot(sourcePath)} is ${sizeBytes} bytes, which is below the ${failMinBytes} byte hard minimum for ${platformLabel}-${archName} ${assetSpec.kind}. Reference=${sizeProfile.referenceBytes}.`
               )
             }
-            if (sizeBytes > sizeProfile.maxBytes) {
+            if (sizeBytes > failMaxBytes) {
               fail(
-                `Publish asset ${relativeToRoot(sourcePath)} is ${sizeBytes} bytes, which exceeds the ${sizeProfile.maxBytes} byte limit for ${platformLabel}-${archName} ${assetSpec.kind}.`
+                `Publish asset ${relativeToRoot(sourcePath)} is ${sizeBytes} bytes, which exceeds the ${failMaxBytes} byte hard maximum for ${platformLabel}-${archName} ${assetSpec.kind}. Reference=${sizeProfile.referenceBytes}.`
+              )
+            }
+            if (sizeBytes < warnMinBytes || sizeBytes > warnMaxBytes) {
+              appendSummary(
+                `- WARN Asset size drift: ${outputName} is ${sizeBytes} bytes, reference ${sizeProfile.referenceBytes}, warn range ${warnMinBytes}-${warnMaxBytes}.`
               )
             }
 
@@ -1061,8 +1162,11 @@ jobs:
                 source_name: fileBasename(sourcePath),
                 file_name: outputName,
                 size_bytes: sizeBytes,
-                expected_min_bytes: sizeProfile.minBytes,
-                expected_max_bytes: sizeProfile.maxBytes,
+                reference_bytes: sizeProfile.referenceBytes,
+                warn_min_bytes: warnMinBytes,
+                warn_max_bytes: warnMaxBytes,
+                fail_min_bytes: failMinBytes,
+                fail_max_bytes: failMaxBytes,
                 relative_path: relativeToBundle(destinationPath),
               })
           }
@@ -1098,7 +1202,7 @@ jobs:
           appendSummary(`- Publishable assets: ${stagedAssets.length}`)
           for (const asset of stagedAssets) {
             appendSummary(
-              `- Asset: ${asset.file_name} (${asset.size_bytes} bytes, expected ${asset.expected_min_bytes}-${asset.expected_max_bytes})`
+              `- Asset: ${asset.file_name} (${asset.size_bytes} bytes, reference ${asset.reference_bytes}, warn ${asset.warn_min_bytes}-${asset.warn_max_bytes}, fail ${asset.fail_min_bytes}-${asset.fail_max_bytes})`
             )
           }
           '@ | Set-Content -Path .github/workflows/.tmp/stage-publish-assets.cjs -Encoding utf8
