@@ -674,6 +674,14 @@ jobs:
               config: builderConfig,
             })
             .catch((error) => {
+              const errorText = (error && (error.stack || error.message)) || String(error)
+              const commandSafe = errorText
+                .replace(/%/g, '%25')
+                .replace(/\r/g, '%0D')
+                .replace(/\n/g, '%0A')
+              console.error(
+                `::error title=Electron Builder ${platformName}-${archName} ${mode}::${commandSafe}`
+              )
               console.error(error)
               process.exit(1)
             })
@@ -1453,7 +1461,14 @@ jobs:
         env:
           NSMUSICS_ELECTRON_PLATFORM: ${{ matrix.platform }}
           NSMUSICS_ELECTRON_ARCH: ${{ matrix.arch }}
-        run: node .github/workflows/.tmp/run-electron-builder.cjs package
+        run: |
+          $diagnosticsDir = '.github/workflows/.tmp/diagnostics'
+          New-Item -ItemType Directory -Path $diagnosticsDir -Force | Out-Null
+          $logPath = Join-Path $diagnosticsDir 'electron-builder-package.log'
+          node .github/workflows/.tmp/run-electron-builder.cjs package *>&1 | Tee-Object -FilePath $logPath
+          if ($LASTEXITCODE -ne 0) {
+            exit $LASTEXITCODE
+          }
 
       - name: Strict packaged native validation
         env:
