@@ -2364,16 +2364,25 @@ jobs:
           }
 
           release_exists() {
+            local target_tag="$1"
             local attempt=1
             local max_attempts=5
             local sleep_seconds=10
+            local list_match
             local stderr_file
             stderr_file="$(mktemp)"
 
             while true; do
-              if gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${1}" >/dev/null 2>"${stderr_file}"; then
+              if gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${target_tag}" >/dev/null 2>"${stderr_file}"; then
                 rm -f "${stderr_file}"
                 return 0
+              fi
+
+              if list_match="$(gh api "repos/${GITHUB_REPOSITORY}/releases?per_page=100" --jq ".[] | select(.tag_name == \"${target_tag}\") | .id" 2>"${stderr_file}")"; then
+                if [ -n "${list_match}" ]; then
+                  rm -f "${stderr_file}"
+                  return 0
+                fi
               fi
 
               if grep -Eq 'HTTP 404|Not Found' "${stderr_file}"; then
@@ -2384,12 +2393,12 @@ jobs:
               if [ "${attempt}" -ge "${max_attempts}" ]; then
                 cat "${stderr_file}" >&2
                 rm -f "${stderr_file}"
-                echo "Unable to determine whether release ${1} exists after ${attempt} attempts." >&2
+                echo "Unable to determine whether release ${target_tag} exists after ${attempt} attempts." >&2
                 return 2
               fi
 
               cat "${stderr_file}" >&2
-              echo "Retrying release existence check for ${1} in ${sleep_seconds}s..." >&2
+              echo "Retrying release existence check for ${target_tag} in ${sleep_seconds}s..." >&2
               sleep "${sleep_seconds}"
               : > "${stderr_file}"
               attempt=$((attempt + 1))
@@ -2468,8 +2477,63 @@ jobs:
           const repo = process.env.GITHUB_REPOSITORY
           const summaryPath = process.env.GITHUB_STEP_SUMMARY
           const publishListPath = path.join('release-artifacts', 'publish-assets.txt')
-          const maxAttempts = 18
+          const maxAttempts = 36
           const sleepSeconds = 10
+
+          const stringifyError = (error) => {
+            const chunks = []
+            for (const value of [error?.message, error?.stderr, error?.stdout]) {
+              if (!value) {
+                continue
+              }
+              const text = Buffer.isBuffer(value) ? value.toString('utf8') : String(value)
+              if (text.trim()) {
+                chunks.push(text.trim())
+              }
+            }
+            return chunks.join('\n')
+          }
+
+          const ghApiJson = (endpoint) => {
+            const payload = childProcess.execFileSync(
+              'gh',
+              ['api', '-H', 'Accept: application/vnd.github+json', endpoint],
+              { encoding: 'utf8' }
+            )
+            return JSON.parse(payload)
+          }
+
+          const ghApiMaybeJson = (endpoint) => {
+            try {
+              return ghApiJson(endpoint)
+            } catch (error) {
+              const detail = stringifyError(error)
+              if (/HTTP 404|Not Found/i.test(detail)) {
+                return null
+              }
+              throw new Error(`gh api ${endpoint} failed.\n${detail}`)
+            }
+          }
+
+          const resolveRelease = () => {
+            const direct = ghApiMaybeJson(`repos/${repo}/releases/tags/${tag}`)
+            if (direct) {
+              return direct
+            }
+
+            for (let page = 1; page <= 5; page += 1) {
+              const releases = ghApiJson(`repos/${repo}/releases?per_page=100&page=${page}`)
+              const match = releases.find((release) => release.tag_name === tag)
+              if (match) {
+                return match
+              }
+              if (releases.length < 100) {
+                break
+              }
+            }
+
+            return null
+          }
 
           if (!fs.existsSync(publishListPath)) {
             throw new Error(`Expected publish asset list not found: ${publishListPath}`)
@@ -2541,20 +2605,29 @@ jobs:
 
           let verifiedAssets = null
           let lastError = null
+          let lastReleaseMeta = null
+          let lastRemoteAssets = []
 
           for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
             try {
-              const releaseJson = childProcess.execFileSync(
-                'gh',
-                ['api', '-H', 'Accept: application/vnd.github+json', `repos/${repo}/releases/tags/${tag}`],
-                { encoding: 'utf8' }
-              )
-              const release = JSON.parse(releaseJson)
+              const release = resolveRelease()
+              if (!release) {
+                throw new Error(`Published release ${tag} is not visible through the release API yet.`)
+              }
+
+              lastReleaseMeta = {
+                id: release.id,
+                draft: Boolean(release.draft),
+                prerelease: Boolean(release.prerelease),
+                assetCount: Array.isArray(release.assets) ? release.assets.length : 0,
+              }
+
               const remoteAssets = (release.assets || []).map((asset) => ({
                 name: asset.name,
                 size: asset.size,
                 digest: asset.digest || '',
               }))
+              lastRemoteAssets = remoteAssets
 
               validateRemoteAssets(remoteAssets)
               verifiedAssets = remoteAssets
@@ -2574,6 +2647,46 @@ jobs:
           }
 
           if (lastError) {
+            const diagnostics = [
+              `Release verification exhausted ${maxAttempts} attempts for ${tag}.`,
+              lastReleaseMeta
+                ? `Last visible release state: id=${lastReleaseMeta.id} draft=${lastReleaseMeta.draft} prerelease=${lastReleaseMeta.prerelease} assets=${lastReleaseMeta.assetCount}`
+                : 'Last visible release state: release not resolved.',
+            ]
+
+            if (lastRemoteAssets.length > 0) {
+              diagnostics.push(
+                `Last remote asset inventory: ${lastRemoteAssets
+                  .map((asset) => `${asset.name} [size=${asset.size}, digest=${asset.digest || 'missing'}]`)
+                  .join('; ')}`
+              )
+            }
+
+            const diagnosticText = diagnostics.join('\n')
+            console.error(diagnosticText)
+            if (summaryPath) {
+              fs.appendFileSync(
+                summaryPath,
+                [
+                  '## Release Verification Failure',
+                  `- Tag: ${tag}`,
+                  `- Attempts: ${maxAttempts}`,
+                  `- Last error: ${lastError.message}`,
+                  `- Last release state: ${
+                    lastReleaseMeta
+                      ? `id=${lastReleaseMeta.id} draft=${lastReleaseMeta.draft} prerelease=${lastReleaseMeta.prerelease} assets=${lastReleaseMeta.assetCount}`
+                      : 'release not resolved'
+                  }`,
+                  `- Last remote asset inventory: ${
+                    lastRemoteAssets.length > 0
+                      ? lastRemoteAssets
+                          .map((asset) => `${asset.name} [size=${asset.size}, digest=${asset.digest || 'missing'}]`)
+                          .join('; ')
+                      : 'none'
+                  }`,
+                ].join('\n') + '\n'
+              )
+            }
             throw lastError
           }
 
