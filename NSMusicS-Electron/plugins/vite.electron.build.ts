@@ -22,16 +22,37 @@ const resolveBuildTargets = (platform?: string) => {
   }
 }
 
-const createRuntimePackageJson = (sourcePackageJson: Record<string, any>) => ({
-  name: sourcePackageJson.name,
-  version: sourcePackageJson.version,
-  homepage: sourcePackageJson.homepage,
-  author: sourcePackageJson.author,
-  description: sourcePackageJson.description,
-  license: sourcePackageJson.license,
-  main: 'background.js',
-  dependencies: sourcePackageJson.dependencies ?? {},
-})
+const RUNTIME_DEPENDENCY_ALLOWLIST = [
+  'axios',
+  'better-sqlite3',
+  'fast-xml-parser',
+  'moment',
+  'node-cache',
+  'node-mpv',
+  'node-taglib-sharp',
+  'spark-md5',
+  'uuid',
+]
+
+const createRuntimePackageJson = (sourcePackageJson: Record<string, any>) => {
+  const sourceDependencies = sourcePackageJson.dependencies ?? {}
+  const runtimeDependencies = Object.fromEntries(
+    RUNTIME_DEPENDENCY_ALLOWLIST.flatMap((packageName) =>
+      sourceDependencies[packageName] ? [[packageName, sourceDependencies[packageName]]] : []
+    )
+  )
+
+  return {
+    name: sourcePackageJson.name,
+    version: sourcePackageJson.version,
+    homepage: sourcePackageJson.homepage,
+    author: sourcePackageJson.author,
+    description: sourcePackageJson.description,
+    license: sourcePackageJson.license,
+    main: 'background.js',
+    dependencies: runtimeDependencies,
+  }
+}
 
 const buildWindowsMpvFilters = () => [
   '**/*',
@@ -119,7 +140,10 @@ export const viteElectronBuild = (): Plugin => {
       // 修改package.json文件的main字段 不然会打包失败
       const json = JSON.parse(fs.readFileSync('package.json', 'utf-8'))
       const runtimePackageJson = createRuntimePackageJson(json)
-      fs.writeFileSync(path.join(process.cwd(), 'dist', 'package.json'), JSON.stringify(runtimePackageJson, null, 2))
+      fs.writeFileSync(
+        path.join(process.cwd(), 'dist', 'package.json'),
+        JSON.stringify(runtimePackageJson, null, 2)
+      )
 
       // 创建一个空的node_modules目录 不然会打包失败
       fs.mkdirSync(path.join(process.cwd(), 'dist/node_modules'), { recursive: true })
