@@ -2222,6 +2222,7 @@ jobs:
           const crypto = require('node:crypto')
           const fs = require('node:fs')
           const path = require('node:path')
+          const summaryPath = process.env.GITHUB_STEP_SUMMARY
 
           const formatBytes = (value) => {
             if (value < 1024) {
@@ -2235,6 +2236,21 @@ jobs:
               unitIndex += 1
             } while (size >= 1024 && unitIndex < units.length - 1)
             return `${size.toFixed(size >= 100 ? 0 : size >= 10 ? 1 : 2)} ${units[unitIndex]}`
+          }
+
+          const formatPercent = (value) => {
+            const sign = value > 0 ? '+' : ''
+            return `${sign}${value.toFixed(1)}%`
+          }
+
+          const classifyAssetSize = (asset) => {
+            if (asset.size_bytes < asset.fail_min_bytes || asset.size_bytes > asset.fail_max_bytes) {
+              return 'FAIL'
+            }
+            if (asset.size_bytes < asset.warn_min_bytes || asset.size_bytes > asset.warn_max_bytes) {
+              return 'WARN'
+            }
+            return 'PASS'
           }
 
           const root = path.resolve('release-artifacts')
@@ -2329,8 +2345,56 @@ jobs:
           notes.push('## Integrity')
           notes.push('- Release assets include `SHA256SUMS.txt` for checksum verification.')
 
+          const auditRows = entries.flatMap((entry) =>
+            entry.publishAssetDetails.map((asset) => {
+              const deltaPercent = ((asset.size_bytes - asset.reference_bytes) / asset.reference_bytes) * 100
+              return {
+                target: `${entry.platform}-${entry.arch}`,
+                name: asset.file_name,
+                kind: asset.kind,
+                size_bytes: asset.size_bytes,
+                size_human: formatBytes(asset.size_bytes),
+                reference_bytes: asset.reference_bytes,
+                reference_human: formatBytes(asset.reference_bytes),
+                delta_percent: deltaPercent,
+                status: classifyAssetSize(asset),
+                warn_range_human: `${formatBytes(asset.warn_min_bytes)} - ${formatBytes(asset.warn_max_bytes)}`,
+                fail_range_human: `${formatBytes(asset.fail_min_bytes)} - ${formatBytes(asset.fail_max_bytes)}`,
+              }
+            })
+          )
+
+          const auditLines = [
+            '# Release Asset Audit',
+            '',
+            `- Build mode: ${process.env.BUILD_MODE}`,
+            `- Git ref: ${process.env.GITHUB_REF}`,
+            `- Commit: ${process.env.GITHUB_SHA}`,
+            `- Assets: ${auditRows.length}`,
+            '',
+            '| Target | File | Kind | Size | Reference | Delta | Status |',
+            '| --- | --- | --- | ---: | ---: | ---: | --- |',
+            ...auditRows.map(
+              (row) =>
+                `| ${row.target} | ${row.name} | ${row.kind} | ${row.size_human} | ${row.reference_human} | ${formatPercent(row.delta_percent)} | ${row.status} |`
+            ),
+            '',
+            '## Thresholds',
+            '| File | Warn Range | Fail Range |',
+            '| --- | --- | --- |',
+            ...auditRows.map(
+              (row) => `| ${row.name} | ${row.warn_range_human} | ${row.fail_range_human} |`
+            ),
+          ]
+
           fs.writeFileSync(path.join(root, 'release-notes.md'), `${notes.join('\n')}\n`)
           fs.writeFileSync(path.join(root, 'publish-assets.txt'), dedupedAssets.join('\n') + '\n')
+          fs.writeFileSync(path.join(root, 'release-asset-audit.md'), `${auditLines.join('\n')}\n`)
+          fs.writeFileSync(path.join(root, 'release-asset-audit.json'), `${JSON.stringify(auditRows, null, 2)}\n`)
+
+          if (summaryPath) {
+            fs.appendFileSync(summaryPath, `${auditLines.join('\n')}\n`)
+          }
           NODE
 
       - name: Create or update release
