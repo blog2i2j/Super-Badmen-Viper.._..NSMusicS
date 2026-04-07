@@ -2201,6 +2201,16 @@ jobs:
       - name: List downloaded assets
         run: find release-artifacts -type f -print | sort
 
+      - name: Verify GitHub CLI release context
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          gh --version
+          gh repo view "${GH_REPO}" --json name >/dev/null
+
       - name: Build release notes and asset manifest
         shell: bash
         run: |
@@ -2323,6 +2333,7 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
 
@@ -2427,6 +2438,7 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
         run: |
           node - <<'NODE'
           const crypto = require('node:crypto')
