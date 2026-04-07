@@ -552,6 +552,48 @@ jobs:
             .map((value) => value.trim())
             .filter(Boolean)
 
+          const buildWindowsMpvFilters = () => [
+            '**/*',
+            '!7z{,/**}',
+            '!doc{,/**}',
+            '!installer{,/**}',
+            '!**/*.7z',
+            '!**/*.zip',
+            '!**/*.pdf',
+            '!**/*.ignore',
+            '!**/chocolatey*',
+            '!**/updater.bat',
+            '!**/settings.xml',
+          ]
+
+          const buildExtraResources = (platformName) => {
+            const resources = [
+              { from: './resources/better_sqlite3.node', to: '.' },
+              { from: './resources/navidrome.db', to: '.' },
+              { from: './resources/nsmusics.db', to: '.' },
+              { from: './resources/icons', to: 'icons' },
+              { from: './resources/config/NSMusicS.ico', to: 'config' },
+              { from: './resources/config/png/256x256.png', to: 'config/png' },
+            ]
+
+            if (platformName === 'win') {
+              resources.push({
+                from: './resources/mpv-x86_64-20241124',
+                to: 'mpv-x86_64-20241124',
+                filter: buildWindowsMpvFilters(),
+              })
+            }
+
+            if (platformName === 'mac') {
+              resources.push({
+                from: './resources/mpv-0.39.0',
+                to: 'mpv-0.39.0',
+              })
+            }
+
+            return resources
+          }
+
           const archMap = {
             x64: electronBuilder.Arch.x64,
             ia32: electronBuilder.Arch.ia32,
@@ -604,10 +646,7 @@ jobs:
               app: path.join(process.cwd(), 'dist'),
             },
             asar: true,
-            extraResources: {
-              from: './resources/',
-              to: '',
-            },
+            extraResources: buildExtraResources(platformName),
           }
 
           const builderConfig = {
@@ -681,6 +720,55 @@ jobs:
             })
           }
 
+          const validateReleaseInventory = (releaseFiles) => {
+            const relativeFiles = releaseFiles.map((targetPath) =>
+              path.relative(process.cwd(), targetPath).replace(/\\/g, '/')
+            )
+
+            const isForbiddenReleaseFile = (relativePath) => {
+              if (
+                relativePath.includes('/resources/node/linux/') ||
+                relativePath.includes('/resources/node/macos/') ||
+                relativePath.includes('/resources/node/win/')
+              ) {
+                return true
+              }
+
+              if (platformName !== 'win' && relativePath.includes('/resources/mpv-x86_64-20241124/')) {
+                return true
+              }
+
+              if (platformName !== 'mac' && relativePath.includes('/resources/mpv-0.39.0/')) {
+                return true
+              }
+
+              if (!relativePath.includes('/resources/mpv-x86_64-20241124/')) {
+                return false
+              }
+
+              return (
+                relativePath.includes('/resources/mpv-x86_64-20241124/7z/') ||
+                relativePath.includes('/resources/mpv-x86_64-20241124/doc/') ||
+                relativePath.includes('/resources/mpv-x86_64-20241124/installer/') ||
+                relativePath.endsWith('.7z') ||
+                relativePath.endsWith('.pdf') ||
+                relativePath.endsWith('.ignore') ||
+                relativePath.endsWith('/updater.bat') ||
+                relativePath.endsWith('/settings.xml') ||
+                relativePath.toLowerCase().includes('chocolatey')
+              )
+            }
+
+            const forbiddenFiles = relativeFiles.filter(isForbiddenReleaseFile)
+            if (forbiddenFiles.length > 0) {
+              throw new Error(
+                `Packaged release contains forbidden resources for ${platformName}-${archName}: ${forbiddenFiles.join(
+                  ', '
+                )}`
+              )
+            }
+          }
+
           const expectedArtifactMatchers = {
             nsis: (value) => value.endsWith('.exe') && !value.endsWith('.exe.blockmap'),
             zip: (value) => value.endsWith('.zip'),
@@ -722,6 +810,7 @@ jobs:
 
             const releaseDir = path.join(process.cwd(), 'release')
             const releaseFiles = walkFiles(releaseDir).map((targetPath) => path.resolve(targetPath))
+            validateReleaseInventory(releaseFiles)
 
             const missingRequestedTargets =
               mode === 'dir'
@@ -1722,7 +1811,7 @@ jobs:
       - name: Build Electron main process bundle
         run: |
           node -e "require('esbuild').buildSync({ entryPoints: ['src/background.ts'], bundle: true, outfile: 'dist/background.js', platform: 'node', target: 'node12', external: ['electron'] })"
-          node -e "const fs=require('fs'); const path=require('path'); const json=JSON.parse(fs.readFileSync('package.json','utf-8')); json.main='background.js'; fs.mkdirSync(path.join(process.cwd(),'dist','node_modules'), { recursive: true }); fs.writeFileSync(path.join(process.cwd(),'dist','package.json'), JSON.stringify(json, null, 2));"
+          node -e "const fs=require('fs'); const path=require('path'); const source=JSON.parse(fs.readFileSync('package.json','utf-8')); const runtime={ name:source.name, version:source.version, homepage:source.homepage, author:source.author, description:source.description, license:source.license, main:'background.js', dependencies:source.dependencies || {} }; fs.mkdirSync(path.join(process.cwd(),'dist','node_modules'), { recursive: true }); fs.writeFileSync(path.join(process.cwd(),'dist','package.json'), JSON.stringify(runtime, null, 2));"
 
       - name: Build distributable artifacts
         env:

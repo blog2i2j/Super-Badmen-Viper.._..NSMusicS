@@ -22,6 +22,59 @@ const resolveBuildTargets = (platform?: string) => {
   }
 }
 
+const createRuntimePackageJson = (sourcePackageJson: Record<string, any>) => ({
+  name: sourcePackageJson.name,
+  version: sourcePackageJson.version,
+  homepage: sourcePackageJson.homepage,
+  author: sourcePackageJson.author,
+  description: sourcePackageJson.description,
+  license: sourcePackageJson.license,
+  main: 'background.js',
+  dependencies: sourcePackageJson.dependencies ?? {},
+})
+
+const buildWindowsMpvFilters = () => [
+  '**/*',
+  '!7z{,/**}',
+  '!doc{,/**}',
+  '!installer{,/**}',
+  '!**/*.7z',
+  '!**/*.zip',
+  '!**/*.pdf',
+  '!**/*.ignore',
+  '!**/chocolatey*',
+  '!**/updater.bat',
+  '!**/settings.xml',
+]
+
+const buildExtraResources = (platform?: string) => {
+  const resources: Array<Record<string, any>> = [
+    { from: './resources/better_sqlite3.node', to: '.' },
+    { from: './resources/navidrome.db', to: '.' },
+    { from: './resources/nsmusics.db', to: '.' },
+    { from: './resources/icons', to: 'icons' },
+    { from: './resources/config/NSMusicS.ico', to: 'config' },
+    { from: './resources/config/png/256x256.png', to: 'config/png' },
+  ]
+
+  if (platform === 'win') {
+    resources.push({
+      from: './resources/mpv-x86_64-20241124',
+      to: 'mpv-x86_64-20241124',
+      filter: buildWindowsMpvFilters(),
+    })
+  }
+
+  if (platform === 'mac') {
+    resources.push({
+      from: './resources/mpv-0.39.0',
+      to: 'mpv-0.39.0',
+    })
+  }
+
+  return resources
+}
+
 // 导出Vite插件函数
 export const viteElectronBuild = (): Plugin => {
   return {
@@ -46,8 +99,8 @@ export const viteElectronBuild = (): Plugin => {
 
       // 修改package.json文件的main字段 不然会打包失败
       const json = JSON.parse(fs.readFileSync('package.json', 'utf-8'))
-      json.main = 'background.js'
-      fs.writeSync(fs.openSync('dist/package.json', 'w'), JSON.stringify(json, null, 2))
+      const runtimePackageJson = createRuntimePackageJson(json)
+      fs.writeFileSync(path.join(process.cwd(), 'dist', 'package.json'), JSON.stringify(runtimePackageJson, null, 2))
 
       // 创建一个空的node_modules目录 不然会打包失败
       fs.mkdirSync(path.join(process.cwd(), 'dist/node_modules'), { recursive: true })
@@ -88,10 +141,12 @@ export const viteElectronBuild = (): Plugin => {
             desktop: {
               Icon: '/usr/share/icons/hicolor/512x512/apps/nsmusics.png',
             },
-            depends: ['mpv'],
             category: 'Audio',
             maintainer: 'Xiang Cheng 1774148579@qq.com',
             artifactName: '${productName}-Linux-${version}-${arch}.${ext}',
+          },
+          deb: {
+            depends: ['mpv'],
           },
           // arch -x86_64 zsh
           // arch -arm64 zsh
@@ -150,10 +205,7 @@ export const viteElectronBuild = (): Plugin => {
             createStartMenuShortcut: true,
             shortcutName: 'NSMusicS',
           },
-          extraResources: {
-            from: './resources/',
-            to: '',
-          },
+          extraResources: buildExtraResources(platform),
         },
       })
     },
