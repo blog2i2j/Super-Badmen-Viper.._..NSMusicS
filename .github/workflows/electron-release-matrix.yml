@@ -573,65 +573,103 @@ jobs:
           const requestedTargets = mode === 'dir' ? targetMap.dir : targetMap[platformName]
           const targets = builderPlatform.createTarget(requestedTargets, builderArch)
 
+          const baseConfig = {
+            appId: 'github.com.nsmusics.xiang.cheng',
+            productName: 'NSMusicS',
+            directories: {
+              output: path.join(process.cwd(), 'release'),
+              app: path.join(process.cwd(), 'dist'),
+            },
+            asar: true,
+            extraResources: {
+              from: './resources/',
+              to: '',
+            },
+          }
+
+          const builderConfig = {
+            ...baseConfig,
+            win: {
+              icon: 'resources/config/NSMusicS.ico',
+              ...(mode === 'dir'
+                ? {}
+                : {
+                    target: ['nsis', 'zip'],
+                    artifactName: '${productName}-Win-${version}-${arch}.${ext}',
+                  }),
+            },
+            linux: {
+              icon: 'resources/config/png',
+              desktop: {
+                Icon: '/usr/share/icons/hicolor/512x512/apps/nsmusics.png',
+              },
+              category: 'Audio',
+              maintainer: 'Xiang Cheng 1774148579@qq.com',
+              ...(mode === 'dir'
+                ? {}
+                : {
+                    target: ['AppImage', 'deb', 'tar.gz'],
+                    depends: ['mpv'],
+                    artifactName: '${productName}-Linux-${version}-${arch}.${ext}',
+                  }),
+            },
+            mac: {
+              icon: 'resources/config/NSMusicS.icns',
+              hardenedRuntime: true,
+              gatekeeperAssess: false,
+              entitlements: 'build/entitlements.mac.plist',
+              entitlementsInherit: 'build/entitlements.mac.plist',
+              identity: null,
+              ...(mode === 'dir'
+                ? {}
+                : {
+                    target: ['dmg', 'zip'],
+                    artifactName: '${productName}-Mac-${version}-${arch}.${ext}',
+                  }),
+            },
+            ...(mode === 'dir'
+              ? {}
+              : {
+                  nsis: {
+                    oneClick: false,
+                    perMachine: true,
+                    allowElevation: true,
+                    allowToChangeInstallationDirectory: true,
+                    installerIcon: 'resources/config/NSMusicS.ico',
+                    uninstallerIcon: 'resources/config/NSMusicS.ico',
+                    installerHeaderIcon: 'resources/config/NSMusicS.ico',
+                    createDesktopShortcut: true,
+                    createStartMenuShortcut: true,
+                    shortcutName: 'NSMusicS',
+                  },
+                }),
+          }
+
           console.log(
             `[ci-electron-builder] mode=${mode} platform=${platformName} arch=${archName} targets=${requestedTargets.join(',')}`
+          )
+          console.log(
+            JSON.stringify(
+              {
+                mode,
+                platformName,
+                archName,
+                configuredTargets: {
+                  win: builderConfig.win.target || null,
+                  linux: builderConfig.linux.target || null,
+                  mac: builderConfig.mac.target || null,
+                },
+              },
+              null,
+              2
+            )
           )
 
           electronBuilder
             .build({
               publish: 'never',
               targets,
-              config: {
-                appId: 'github.com.nsmusics.xiang.cheng',
-                productName: 'NSMusicS',
-                directories: {
-                  output: path.join(process.cwd(), 'release'),
-                  app: path.join(process.cwd(), 'dist'),
-                },
-                asar: true,
-                win: {
-                  target: ['nsis', 'zip'],
-                  icon: 'resources/config/NSMusicS.ico',
-                  artifactName: '${productName}-Win-${version}-${arch}.${ext}',
-                },
-                linux: {
-                  target: ['AppImage', 'deb', 'tar.gz'],
-                  icon: 'resources/config/png',
-                  desktop: {
-                    Icon: '/usr/share/icons/hicolor/512x512/apps/nsmusics.png',
-                  },
-                  depends: ['mpv'],
-                  category: 'Audio',
-                  maintainer: 'Xiang Cheng 1774148579@qq.com',
-                  artifactName: '${productName}-Linux-${version}-${arch}.${ext}',
-                },
-                mac: {
-                  target: ['dmg', 'zip'],
-                  icon: 'resources/config/NSMusicS.icns',
-                  artifactName: '${productName}-Mac-${version}-${arch}.${ext}',
-                  hardenedRuntime: true,
-                  gatekeeperAssess: false,
-                  entitlements: 'build/entitlements.mac.plist',
-                  entitlementsInherit: 'build/entitlements.mac.plist',
-                  identity: null,
-                },
-                nsis: {
-                  oneClick: false,
-                  perMachine: true,
-                  allowElevation: true,
-                  allowToChangeInstallationDirectory: true,
-                  installerIcon: 'resources/config/NSMusicS.ico',
-                  uninstallerIcon: 'resources/config/NSMusicS.ico',
-                  installerHeaderIcon: 'resources/config/NSMusicS.ico',
-                  createDesktopShortcut: true,
-                  createStartMenuShortcut: true,
-                  shortcutName: 'NSMusicS',
-                },
-                extraResources: {
-                  from: './resources/',
-                  to: '',
-                },
-              },
+              config: builderConfig,
             })
             .catch((error) => {
               console.error(error)
