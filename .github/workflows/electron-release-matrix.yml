@@ -1506,12 +1506,6 @@ jobs:
           New-Item -ItemType Directory -Path $collectedAssetsDir -Force | Out-Null
           $logPath = Join-Path $diagnosticsDir 'electron-builder-package.log'
 
-          function Invoke-ElectronBuilderTarget([string]$target, [string]$targetLogPath) {
-            $env:NSMUSICS_ELECTRON_TARGETS = $target
-            node .github/workflows/.tmp/run-electron-builder.cjs package *>&1 | Tee-Object -FilePath $targetLogPath
-            return $LASTEXITCODE
-          }
-
           function Repair-MacDmgBusyFailure([string]$targetLogPath, [int]$attempt, [int]$maxAttempts) {
             if (-not (Test-Path $targetLogPath)) {
               return $false
@@ -1599,7 +1593,9 @@ jobs:
             foreach ($target in $targets) {
               $safeTarget = $target.Replace('.', '_').Replace('/', '_')
               $targetLogPath = Join-Path $diagnosticsDir ("electron-builder-$safeTarget.log")
-              $targetExitCode = Invoke-ElectronBuilderTarget -target $target -targetLogPath $targetLogPath
+              $env:NSMUSICS_ELECTRON_TARGETS = $target
+              node .github/workflows/.tmp/run-electron-builder.cjs package *>&1 | Tee-Object -FilePath $targetLogPath
+              $targetExitCode = $LASTEXITCODE
               if ($targetExitCode -ne 0) {
                 exit $targetExitCode
               }
@@ -1628,7 +1624,9 @@ jobs:
               for ($attempt = 1; $attempt -le $maxAttempts; $attempt++) {
                 $logSuffix = if ($maxAttempts -gt 1) { "$target-attempt$attempt" } else { $target }
                 $targetLogPath = Join-Path $diagnosticsDir ("electron-builder-$logSuffix.log")
-                $targetExitCode = Invoke-ElectronBuilderTarget -target $target -targetLogPath $targetLogPath
+                $env:NSMUSICS_ELECTRON_TARGETS = $target
+                node .github/workflows/.tmp/run-electron-builder.cjs package *>&1 | Tee-Object -FilePath $targetLogPath
+                $targetExitCode = $LASTEXITCODE
                 if ($targetExitCode -eq 0) {
                   $targetSucceeded = $true
                   break
