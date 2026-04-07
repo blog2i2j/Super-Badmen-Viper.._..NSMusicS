@@ -1480,17 +1480,100 @@ jobs:
           $diagnosticsDir = '.github/workflows/.tmp/diagnostics'
           New-Item -ItemType Directory -Path $diagnosticsDir -Force | Out-Null
           $logPath = Join-Path $diagnosticsDir 'electron-builder-package.log'
+
+          function Invoke-ElectronBuilderTarget([string]$target, [string]$targetLogPath) {
+            $env:NSMUSICS_ELECTRON_TARGETS = $target
+            node .github/workflows/.tmp/run-electron-builder.cjs package *>&1 | Tee-Object -FilePath $targetLogPath
+            return $LASTEXITCODE
+          }
+
+          function Repair-MacDmgBusyFailure([string]$targetLogPath, [int]$attempt, [int]$maxAttempts) {
+            if (-not (Test-Path $targetLogPath)) {
+              return $false
+            }
+
+            $logContent = Get-Content -LiteralPath $targetLogPath -Raw
+            $isBusyDetach = $logContent -match "hdiutil: couldn't eject" -and $logContent -match 'Resource busy'
+            if (-not $isBusyDetach -or $attempt -ge $maxAttempts) {
+              return $false
+            }
+
+            Write-Host "::warning title=macOS DMG retry::Transient hdiutil detach busy failure detected on attempt $attempt of $maxAttempts. Retrying dmg packaging."
+            Write-Host '::group::macOS disk image state'
+            & hdiutil info *>&1 | ForEach-Object { Write-Host $_ }
+            Write-Host '::endgroup::'
+
+            $disks = [regex]::Matches($logContent, '/dev/disk\d+') |
+              ForEach-Object { $_.Value } |
+              Select-Object -Unique
+
+            foreach ($disk in $disks) {
+              Write-Host "::group::Cleanup $disk"
+              try {
+                & hdiutil detach -force $disk *>&1 | ForEach-Object { Write-Host $_ }
+              } catch {
+                Write-Host $_
+              }
+              $diskName = $disk -replace '^/dev/', ''
+              try {
+                & diskutil eject $diskName *>&1 | ForEach-Object { Write-Host $_ }
+              } catch {
+                Write-Host $_
+              }
+              Write-Host '::endgroup::'
+            }
+
+            if (Test-Path 'release') {
+              Get-ChildItem -Path 'release' -Recurse -File -ErrorAction SilentlyContinue |
+                Where-Object {
+                  $_.Name -like '*.dmg' -or
+                  $_.Name -like '*.dmg.blockmap'
+                } |
+                ForEach-Object {
+                  Remove-Item -LiteralPath $_.FullName -Force -ErrorAction SilentlyContinue
+                }
+            }
+            Start-Sleep -Seconds (5 * $attempt)
+            return $true
+          }
+
           if ('${{ matrix.platform }}' -eq 'linux' -and '${{ matrix.arch }}' -eq 'arm64') {
             $targets = @('AppImage', 'deb', 'tar.gz')
             foreach ($target in $targets) {
               $safeTarget = $target.Replace('.', '_').Replace('/', '_')
               $targetLogPath = Join-Path $diagnosticsDir ("electron-builder-$safeTarget.log")
-              $env:NSMUSICS_ELECTRON_TARGETS = $target
-              node .github/workflows/.tmp/run-electron-builder.cjs package *>&1 | Tee-Object -FilePath $targetLogPath
-              if ($LASTEXITCODE -ne 0) {
-                exit $LASTEXITCODE
+              $targetExitCode = Invoke-ElectronBuilderTarget -target $target -targetLogPath $targetLogPath
+              if ($targetExitCode -ne 0) {
+                exit $targetExitCode
               }
             }
+            Remove-Item Env:NSMUSICS_ELECTRON_TARGETS -ErrorAction SilentlyContinue
+          } elseif ('${{ matrix.platform }}' -eq 'mac') {
+            $macTargets = @('zip', 'dmg')
+            foreach ($target in $macTargets) {
+              $maxAttempts = if ($target -eq 'dmg') { 3 } else { 1 }
+              $targetSucceeded = $false
+
+              for ($attempt = 1; $attempt -le $maxAttempts; $attempt++) {
+                $logSuffix = if ($maxAttempts -gt 1) { "$target-attempt$attempt" } else { $target }
+                $targetLogPath = Join-Path $diagnosticsDir ("electron-builder-$logSuffix.log")
+                $targetExitCode = Invoke-ElectronBuilderTarget -target $target -targetLogPath $targetLogPath
+                if ($targetExitCode -eq 0) {
+                  $targetSucceeded = $true
+                  break
+                }
+
+                $shouldRetry = Repair-MacDmgBusyFailure -targetLogPath $targetLogPath -attempt $attempt -maxAttempts $maxAttempts
+                if (-not $shouldRetry) {
+                  exit $targetExitCode
+                }
+              }
+
+              if (-not $targetSucceeded) {
+                exit 1
+              }
+            }
+
             Remove-Item Env:NSMUSICS_ELECTRON_TARGETS -ErrorAction SilentlyContinue
           } else {
             node .github/workflows/.tmp/run-electron-builder.cjs package *>&1 | Tee-Object -FilePath $logPath
