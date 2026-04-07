@@ -566,6 +566,25 @@ jobs:
             '!**/settings.xml',
           ]
 
+          const electronLanguageWhitelist = [
+            'zh-CN',
+            'zh-TW',
+            'en-US',
+            'es',
+            'fa',
+            'fr',
+            'ja',
+            'pl',
+            'de',
+            'it',
+            'ru',
+            'pt-BR',
+            'sr',
+            'sv',
+            'cs',
+            'nl',
+          ]
+
           const buildExtraResources = (platformName) => {
             const resources = [
               { from: './resources/better_sqlite3.node', to: 'better_sqlite3.node' },
@@ -641,6 +660,7 @@ jobs:
           const baseConfig = {
             appId: 'github.com.nsmusics.xiang.cheng',
             productName: 'NSMusicS',
+            electronLanguages: electronLanguageWhitelist,
             directories: {
               output: path.join(process.cwd(), 'release'),
               app: path.join(process.cwd(), 'dist'),

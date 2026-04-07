@@ -47,6 +47,25 @@ const buildWindowsMpvFilters = () => [
   '!**/settings.xml',
 ]
 
+const ELECTRON_LANGUAGE_WHITELIST = [
+  'zh-CN',
+  'zh-TW',
+  'en-US',
+  'es',
+  'fa',
+  'fr',
+  'ja',
+  'pl',
+  'de',
+  'it',
+  'ru',
+  'pt-BR',
+  'sr',
+  'sv',
+  'cs',
+  'nl',
+]
+
 const buildExtraResources = (platform?: string) => {
   const resources: Array<Record<string, any>> = [
     { from: './resources/better_sqlite3.node', to: 'better_sqlite3.node' },
@@ -114,6 +133,7 @@ export const viteElectronBuild = (): Plugin => {
         config: {
           appId: 'github.com.nsmusics.xiang.cheng',
           productName: 'NSMusicS',
+          electronLanguages: ELECTRON_LANGUAGE_WHITELIST,
           directories: {
             output: path.join(process.cwd(), 'release'), //输出目录
             app: path.join(process.cwd(), 'dist'), //app目录
