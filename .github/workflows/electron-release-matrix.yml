@@ -2025,6 +2025,7 @@ jobs:
           $bundleRoot = Join-Path (Join-Path '.github/workflows/.out' $env:NSMUSICS_BUILD_MODE) $bundleLabel
           $publishDir = Join-Path $bundleRoot 'publish'
           $inspectionRoot = Join-Path $bundleRoot 'inspection'
+          $scratchRoot = Join-Path (Join-Path '.github/workflows/.tmp/package-inspection' $env:NSMUSICS_BUILD_MODE) $bundleLabel
           $scriptPath = '.github/workflows/.tmp/summarize-package-contents.cjs'
           if (-not (Test-Path $publishDir)) {
             throw "Publish directory not found: $publishDir"
@@ -2032,7 +2033,11 @@ jobs:
           if (Test-Path $inspectionRoot) {
             Remove-Item -LiteralPath $inspectionRoot -Recurse -Force -ErrorAction SilentlyContinue
           }
+          if (Test-Path $scratchRoot) {
+            Remove-Item -LiteralPath $scratchRoot -Recurse -Force -ErrorAction SilentlyContinue
+          }
           New-Item -ItemType Directory -Path $inspectionRoot -Force | Out-Null
+          New-Item -ItemType Directory -Path $scratchRoot -Force | Out-Null
 
           @'
           const fs = require('node:fs')
@@ -2137,7 +2142,7 @@ jobs:
               if (/(^|\/)(resources|Resources)\/mpv[^/]*\//.test(relativePath)) {
                 mpvTotalBytes += bytes
               }
-              if (/\/locales\/[^/]+\.pak$/i.test(relativePath) || /\.lproj\/locale\.pak$/i.test(relativePath)) {
+              if (/(^|\/)locales\/[^/]+\.pak$/i.test(relativePath) || /\.lproj\/locale\.pak$/i.test(relativePath)) {
                 electronLocalesTotalBytes += bytes
               }
               if (/\/app\.asar$/i.test(relativePath)) {
@@ -2249,23 +2254,51 @@ jobs:
             }
           }
 
+          function Resolve-AppAsarPath([string]$rootPath) {
+            $matches = Get-ChildItem -Path $rootPath -Recurse -File -ErrorAction SilentlyContinue |
+              Where-Object { $_.Name -eq 'app.asar' } |
+              Sort-Object FullName
+            $matches = @($matches)
+            if ($matches.Count -ne 1) {
+              $candidates = if ($matches.Count -eq 0) { '' } else { ($matches.FullName -join ', ') }
+              throw "Expected exactly one app.asar under $rootPath. Found $($matches.Count). Candidates: $candidates"
+            }
+            return $matches[0].FullName
+          }
+
+          function Write-AsarInspectionSummary([string]$kind, [string]$rootPath) {
+            $asarPath = Resolve-AppAsarPath -rootPath $rootPath
+            $asarExtractDir = Join-Path $scratchRoot "$kind-app-asar"
+            if (Test-Path $asarExtractDir) {
+              Remove-Item -LiteralPath $asarExtractDir -Recurse -Force -ErrorAction SilentlyContinue
+            }
+            New-Item -ItemType Directory -Path $asarExtractDir -Force | Out-Null
+            & npx asar extract $asarPath $asarExtractDir
+            if ($LASTEXITCODE -ne 0) {
+              throw "asar extraction failed for $asarPath"
+            }
+            Write-InspectionSummary -kind "$kind-app.asar" -rootPath $asarExtractDir -sourcePath $asarPath
+          }
+
           if ($env:NSMUSICS_ELECTRON_PLATFORM -eq 'win') {
             $zipPath = Get-SinglePublishAsset '*.zip' 'Windows packaged zip'
-            $zipExtractDir = Join-Path $inspectionRoot 'zip-extracted'
+            $zipExtractDir = Join-Path $scratchRoot 'zip-extracted'
             Expand-Archive -LiteralPath $zipPath -DestinationPath $zipExtractDir -Force
             Write-InspectionSummary -kind 'zip' -rootPath $zipExtractDir -sourcePath $zipPath
+            Write-AsarInspectionSummary -kind 'zip' -rootPath $zipExtractDir
           } elseif ($env:NSMUSICS_ELECTRON_PLATFORM -eq 'linux') {
             $tarGzPath = Get-SinglePublishAsset '*.tar.gz' 'Linux tar.gz package'
-            $tarExtractDir = Join-Path $inspectionRoot 'tar-gz-extracted'
+            $tarExtractDir = Join-Path $scratchRoot 'tar-gz-extracted'
             New-Item -ItemType Directory -Path $tarExtractDir -Force | Out-Null
             & tar -xzf $tarGzPath -C $tarExtractDir
             if ($LASTEXITCODE -ne 0) {
               throw "tar extraction failed for $tarGzPath"
             }
             Write-InspectionSummary -kind 'tar.gz' -rootPath $tarExtractDir -sourcePath $tarGzPath
+            Write-AsarInspectionSummary -kind 'tar.gz' -rootPath $tarExtractDir
 
             $debPath = Get-SinglePublishAsset '*.deb' 'Linux deb package'
-            $debExtractDir = Join-Path $inspectionRoot 'deb-extracted'
+            $debExtractDir = Join-Path $scratchRoot 'deb-extracted'
             New-Item -ItemType Directory -Path $debExtractDir -Force | Out-Null
             & dpkg-deb -x $debPath $debExtractDir
             if ($LASTEXITCODE -ne 0) {
@@ -2274,7 +2307,7 @@ jobs:
             Write-InspectionSummary -kind 'deb' -rootPath $debExtractDir -sourcePath $debPath
 
             $appImagePath = Get-SinglePublishAsset '*.AppImage' 'Linux AppImage package'
-            $appImageExtractDir = Join-Path $inspectionRoot 'appimage-extracted'
+            $appImageExtractDir = Join-Path $scratchRoot 'appimage-extracted'
             New-Item -ItemType Directory -Path $appImageExtractDir -Force | Out-Null
             Push-Location $appImageExtractDir
             try {
@@ -2293,16 +2326,17 @@ jobs:
             Write-InspectionSummary -kind 'AppImage' -rootPath $appImageRoot -sourcePath $appImagePath
           } elseif ($env:NSMUSICS_ELECTRON_PLATFORM -eq 'mac') {
             $zipPath = Get-SinglePublishAsset '*.zip' 'macOS packaged zip'
-            $zipExtractDir = Join-Path $inspectionRoot 'zip-extracted'
+            $zipExtractDir = Join-Path $scratchRoot 'zip-extracted'
             New-Item -ItemType Directory -Path $zipExtractDir -Force | Out-Null
             & ditto -x -k $zipPath $zipExtractDir
             if ($LASTEXITCODE -ne 0) {
               throw "ditto extraction failed for $zipPath"
             }
             Write-InspectionSummary -kind 'zip' -rootPath $zipExtractDir -sourcePath $zipPath
+            Write-AsarInspectionSummary -kind 'zip' -rootPath $zipExtractDir
 
             $dmgPath = Get-SinglePublishAsset '*.dmg' 'macOS dmg package'
-            $dmgMountPath = Join-Path $inspectionRoot 'dmg-mount'
+            $dmgMountPath = Join-Path $scratchRoot 'dmg-mount'
             New-Item -ItemType Directory -Path $dmgMountPath -Force | Out-Null
             try {
               & hdiutil attach $dmgPath -nobrowse -mountpoint $dmgMountPath
@@ -2318,6 +2352,7 @@ jobs:
           }
 
           node -e "const fs=require('fs'); const path=require('path'); const root=path.resolve(process.argv[1]); const files=[]; const walk=(dir)=>{ for(const entry of fs.readdirSync(dir,{withFileTypes:true})){ const full=path.join(dir,entry.name); if(entry.isDirectory()) walk(full); else if(entry.isFile() && entry.name==='package-content-summary.json') files.push(full); } }; walk(root); const summaries=files.sort().map((filePath)=>JSON.parse(fs.readFileSync(filePath,'utf8'))); fs.writeFileSync(path.join(root,'package-content-summaries.json'), JSON.stringify(summaries,null,2)+'\n');" $inspectionRoot
+          Remove-Item -LiteralPath $scratchRoot -Recurse -Force -ErrorAction SilentlyContinue
 
       - name: Upload packaged artifacts
         uses: actions/upload-artifact@v7
