@@ -14,10 +14,11 @@ Its paired server, [NineSong](https://github.com/Super-Badmen-Viper/NineSong), p
 
 As of April 9, 2026:
 
-- The latest Windows release is already live on Microsoft Store.
+- The Windows release currently listed on Microsoft Store is the NSMusicS-Flutter closed-source paid edition.
 - Microsoft Store web page: [https://apps.microsoft.com/detail/9N0RWS2TJXG1](https://apps.microsoft.com/detail/9N0RWS2TJXG1)
 - Windows Store deep link: `ms-windows-store://pdp/?productid=9N0RWS2TJXG1`
 - A 15-day free trial is currently available on Windows.
+- The current GitHub releases published from this repository remain the open-source Electron transition edition.
 - The current Electron and Web delivery line is a transition release that keeps the project available before the next-generation client wave lands.
 - The next refactored client wave is targeted for roughly mid-May 2026.
 - That refactored wave is planned to include React, React Native, Vue, and Angular client lines.
@@ -25,8 +26,17 @@ As of April 9, 2026:
 - App Store releases for macOS and iOS, plus the Google Play release for Android, are planned next.
 - The product direction remains centered on local music libraries, private cloud music, compatibility with major self-hosted servers, and deeper integration with [NineSong](https://github.com/Super-Badmen-Viper/NineSong).
 
-If you want the newest production-facing build first, start from Microsoft Store.  
-If you want to follow the architecture, roadmap, and ecosystem direction, this repository remains the main workspace entry point.
+If you want the Windows commercial release, start from Microsoft Store.  
+If you want the current open-source release line, source tree, architecture, and roadmap context, use this repository and its GitHub Releases.
+
+## Open-source And Store Editions
+
+The current public-facing delivery is split into two different product lines. They are related, but they are not the same build or the same source release.
+
+| Edition | Current role | Delivery channel | Source availability | Charging model | Notes |
+| --- | --- | --- | --- | --- | --- |
+| Open-source edition | Current public open-source delivery line for this repository, presently centered on the Electron/Web transition release | GitHub Releases, Docker image, repository source tree | Public in this repository | Free under the repository license and related project terms | This is the line you should follow if you want the code, transition builds, or roadmap context |
+| Microsoft Store edition | Current Windows commercial distribution for NSMusicS-Flutter | Microsoft Store | Closed-source private codebase, not published in this repository | Paid, with the current 15-day trial policy on Windows | This is the consumer-facing Store package and it follows its own private delivery rhythm |
 
 ## Why NSMusicS
 
@@ -66,6 +76,7 @@ The desktop client currently covers:
 
 Current status:
 
+- This is the currently published open-source release line in this repository.
 - This is the currently released transition client line.
 - It remains the bridge release until the refactored React, React Native, Vue, and Angular client wave is published.
 - Its Web mirror and Docker delivery remain important for the current transition period.
@@ -114,13 +125,19 @@ The Flutter product line represents the next major cross-platform client directi
 - Windows
 - macOS
 
+Important distribution note:
+
+- The Windows app currently available on Microsoft Store belongs to this Flutter line.
+- That Store package is the closed-source paid commercial edition, not the open-source build published from this repository.
+- Its codebase, packaging, release rhythm, and store policy are separate from the open-source Electron/Web transition line here.
+
 The current roadmap expects the refactored edition around two months later, with mobile store releases planned after the Windows track already in market.
 
 ## Downloads
 
-- Windows production release: [Microsoft Store Web Page](https://apps.microsoft.com/detail/9N0RWS2TJXG1)
+- Windows commercial Flutter edition: [Microsoft Store Web Page](https://apps.microsoft.com/detail/9N0RWS2TJXG1)
 - Windows Store deep link: `ms-windows-store://pdp/?productid=9N0RWS2TJXG1`
-- Electron releases: https://github.com/Super-Badmen-Viper/NSMusicS/releases
+- Open-source Electron releases: https://github.com/Super-Badmen-Viper/NSMusicS/releases
 - Web mirror Docker image: https://hub.docker.com/r/xiangch007/nsmusics
 - Legacy WPF release: https://github.com/Super-Badmen-Viper/NSMusicS_WPF/releases/tag/NSMusicS_Win(WPF)_0.9.0
 - NineSong releases: https://github.com/Super-Badmen-Viper/NineSong/releases/
@@ -142,7 +159,7 @@ The current roadmap expects the refactored edition around two months later, with
 | [NineSong](https://github.com/Super-Badmen-Viper/NineSong) | Frozen public snapshot | Go, MongoDB, Gin, JWT, SQLite, Docker | Docker | AGPL-3.0 with commercial-use restrictions noted in project docs |
 | NineSongAI | Updating | Java, MongoDB, Spring Boot, MySQL, Docker | Docker | AGPL-3.0 with commercial-use restrictions noted in project docs |
 | NineSongPro | Updating | Java, MongoDB, Spring Cloud Alibaba, MySQL, Docker | Docker | AGPL-3.0 with commercial-use restrictions noted in project docs |
-| NSMusicS For Flutter | Updating | Flutter, Dart | Android, iOS, Windows, macOS | AGPL-3.0 with commercial-use restrictions noted in project docs |
+| NSMusicS For Flutter (Microsoft Store commercial edition) | Windows commercial release live, broader rollout continuing | Flutter, Dart | Windows currently in market; Android, iOS, macOS planned in this product line | Proprietary closed-source paid edition |
 | NSMusicS For HarmonyOS | Planned | ArkTS, ArkUI | HarmonyOS | AGPL-3.0 with commercial-use restrictions noted in project docs |
 | NSMusicS For Audio | Planned | PyTorch, Python, Jupyter, MATLAB | Docker | AGPL-3.0 with commercial-use restrictions noted in project docs |
 | NSMusicS For Knowledge Graph | Planned | NebulaGraph or Neo4j | Docker | AGPL-3.0 with commercial-use restrictions noted in project docs |
