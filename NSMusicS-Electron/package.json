@@ -94,7 +94,7 @@
     "unplugin-icons": "^0.18.3",
     "unplugin-vue-components": "^0.26.0",
     "vfonts": "^0.0.3",
-    "vite": "^6.3.5",
+    "vite": "^6.4.2",
     "vue": "^3.5.13",
     "vue-eslint-parser": "^10.2.0",
     "vue-router": "^4.2.5",
