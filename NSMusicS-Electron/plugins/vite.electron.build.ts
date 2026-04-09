@@ -3,18 +3,43 @@ import * as electronBuilder from 'electron-builder'
 import path from 'path'
 import fs from 'fs'
 
-const resolveBuildTargets = (platform?: string) => {
-  if (!platform) {
+const resolveBuilderArch = (arch?: string) => {
+  if (!arch) {
     return undefined
+  }
+
+  switch (arch) {
+    case 'x64':
+      return electronBuilder.Arch.x64
+    case 'ia32':
+    case 'x86':
+      return electronBuilder.Arch.ia32
+    case 'arm64':
+      return electronBuilder.Arch.arm64
+    default:
+      throw new Error(
+        `Unsupported NSMUSICS_ELECTRON_ARCH: ${arch}. Expected one of: x64, ia32, x86, arm64`
+      )
+  }
+}
+
+const resolveRequestedTargets = (platform: string, overrideTargets?: string) => {
+  const requestedTargets = (overrideTargets || '')
+    .split(',')
+    .map((value) => value.trim())
+    .filter(Boolean)
+
+  if (requestedTargets.length > 0) {
+    return requestedTargets
   }
 
   switch (platform) {
     case 'win':
-      return electronBuilder.Platform.WINDOWS.createTarget()
+      return ['nsis', 'zip']
     case 'linux':
-      return electronBuilder.Platform.LINUX.createTarget()
+      return ['AppImage', 'deb', 'rpm', 'tar.gz']
     case 'mac':
-      return electronBuilder.Platform.MAC.createTarget()
+      return ['dmg', 'zip']
     default:
       throw new Error(
         `Unsupported NSMUSICS_ELECTRON_PLATFORM: ${platform}. Expected one of: win, linux, mac`
@@ -22,35 +47,25 @@ const resolveBuildTargets = (platform?: string) => {
   }
 }
 
-const RUNTIME_DEPENDENCY_ALLOWLIST = [
-  'axios',
-  'better-sqlite3',
-  'fast-xml-parser',
-  'moment',
-  'node-cache',
-  'node-mpv',
-  'node-taglib-sharp',
-  'spark-md5',
-  'uuid',
-]
+const resolveBuildTargets = (platform?: string, arch?: string, overrideTargets?: string) => {
+  if (!platform) {
+    return undefined
+  }
 
-const createRuntimePackageJson = (sourcePackageJson: Record<string, any>) => {
-  const sourceDependencies = sourcePackageJson.dependencies ?? {}
-  const runtimeDependencies = Object.fromEntries(
-    RUNTIME_DEPENDENCY_ALLOWLIST.flatMap((packageName) =>
-      sourceDependencies[packageName] ? [[packageName, sourceDependencies[packageName]]] : []
-    )
-  )
+  const builderArch = resolveBuilderArch(arch)
+  const requestedTargets = resolveRequestedTargets(platform, overrideTargets)
 
-  return {
-    name: sourcePackageJson.name,
-    version: sourcePackageJson.version,
-    homepage: sourcePackageJson.homepage,
-    author: sourcePackageJson.author,
-    description: sourcePackageJson.description,
-    license: sourcePackageJson.license,
-    main: 'background.js',
-    dependencies: runtimeDependencies,
+  switch (platform) {
+    case 'win':
+      return electronBuilder.Platform.WINDOWS.createTarget(requestedTargets, builderArch)
+    case 'linux':
+      return electronBuilder.Platform.LINUX.createTarget(requestedTargets, builderArch)
+    case 'mac':
+      return electronBuilder.Platform.MAC.createTarget(requestedTargets, builderArch)
+    default:
+      throw new Error(
+        `Unsupported NSMUSICS_ELECTRON_PLATFORM: ${platform}. Expected one of: win, linux, mac`
+      )
   }
 }
 
@@ -67,6 +82,31 @@ const buildWindowsMpvFilters = () => [
   '!**/updater.bat',
   '!**/settings.xml',
 ]
+
+const resolveWindowsMpvResourceDirectory = (targetArch?: string) => {
+  const archAliases: Record<string, string[]> = {
+    x64: ['x86_64'],
+    ia32: ['i686'],
+    arm64: ['aarch64', 'arm64'],
+  }
+  const archName = targetArch || process.arch
+  const aliases = archAliases[archName] || [archName]
+  const resourcesRoot = path.join(process.cwd(), 'resources')
+  const candidates = fs
+    .readdirSync(resourcesRoot, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory() && /^mpv[-_]/i.test(entry.name))
+    .map((entry) => entry.name)
+    .filter((name) => aliases.some((alias) => name.toLowerCase().includes(alias)))
+    .sort((left, right) => right.localeCompare(left))
+
+  if (candidates.length === 0) {
+    throw new Error(
+      `Missing Windows mpv runtime directory for arch ${archName} under ${resourcesRoot}`
+    )
+  }
+
+  return candidates[0]
+}
 
 const ELECTRON_LANGUAGE_WHITELIST = [
   'zh-CN',
@@ -87,6 +127,80 @@ const ELECTRON_LANGUAGE_WHITELIST = [
   'nl',
 ]
 
+const MAC_LPROJ_WHITELIST = new Set([
+  'base',
+  'en',
+  ...ELECTRON_LANGUAGE_WHITELIST.map((value) => value.replace(/_/g, '-').toLowerCase()),
+])
+
+const normalizeMacLprojName = (value: string) =>
+  value
+    .replace(/\.lproj$/i, '')
+    .replace(/_/g, '-')
+    .toLowerCase()
+
+const pruneMacLprojDirectories = (rootDir: string) => {
+  const removed: string[] = []
+
+  const walk = (currentDir: string) => {
+    for (const entry of fs.readdirSync(currentDir, { withFileTypes: true })) {
+      if (!entry.isDirectory()) {
+        continue
+      }
+
+      const fullPath = path.join(currentDir, entry.name)
+      if (/\.lproj$/i.test(entry.name)) {
+        const normalized = normalizeMacLprojName(entry.name)
+        if (!MAC_LPROJ_WHITELIST.has(normalized)) {
+          fs.rmSync(fullPath, { recursive: true, force: true })
+          removed.push(path.relative(rootDir, fullPath).replace(/\\/g, '/'))
+          continue
+        }
+      }
+
+      walk(fullPath)
+    }
+  }
+
+  if (fs.existsSync(rootDir)) {
+    walk(rootDir)
+  }
+
+  return removed.sort()
+}
+
+const afterPack = async (context: { electronPlatformName?: string; appOutDir: string }) => {
+  if ((context.electronPlatformName || '').toLowerCase() !== 'darwin') {
+    return
+  }
+
+  const removed = pruneMacLprojDirectories(context.appOutDir)
+  console.log(
+    `[electron-builder] macOS lproj pruning removed ${removed.length} directories under ${context.appOutDir}`
+  )
+  for (const relativePath of removed.slice(0, 80)) {
+    console.log(`[electron-builder] pruned lproj: ${relativePath}`)
+  }
+  if (removed.length > 80) {
+    console.log(`[electron-builder] pruned lproj: ... ${removed.length - 80} more`)
+  }
+}
+
+const PACKAGED_FILE_PATTERNS = [
+  '**/*',
+  '!**/*.map',
+  '!**/.github{,/**}',
+  '!**/{test,tests,__tests__,example,examples,doc,docs,benchmark,benchmarks}{,/**}',
+  '!**/node_modules/better-sqlite3/deps{,/**}',
+  '!**/node_modules/better-sqlite3/src{,/**}',
+  '!**/node_modules/node-taglib-sharp/src{,/**}',
+  '!**/node_modules/moment/src{,/**}',
+  '!**/node_modules/moment/dist{,/**}',
+  '!**/node_modules/moment/min{,/**}',
+  '!**/node_modules/moment/ts3.1-typings{,/**}',
+  '!**/node_modules/moment/{ender.js,moment.d.ts,CHANGELOG.md}',
+]
+
 const buildExtraResources = (platform?: string) => {
   const resources: Array<Record<string, any>> = [
     { from: './resources/better_sqlite3.node', to: 'better_sqlite3.node' },
@@ -98,9 +212,12 @@ const buildExtraResources = (platform?: string) => {
   ]
 
   if (platform === 'win') {
+    const mpvDir = resolveWindowsMpvResourceDirectory(
+      process.env.NSMUSICS_ELECTRON_ARCH || process.arch
+    )
     resources.push({
-      from: './resources/mpv-x86_64-20241124',
-      to: 'mpv-x86_64-20241124',
+      from: `./resources/${mpvDir}`,
+      to: mpvDir,
       filter: buildWindowsMpvFilters(),
     })
   }
@@ -139,32 +256,41 @@ export const viteElectronBuild = (): Plugin => {
 
       // 修改package.json文件的main字段 不然会打包失败
       const json = JSON.parse(fs.readFileSync('package.json', 'utf-8'))
-      const runtimePackageJson = createRuntimePackageJson(json)
+      json.main = 'background.js'
       fs.writeFileSync(
         path.join(process.cwd(), 'dist', 'package.json'),
-        JSON.stringify(runtimePackageJson, null, 2)
+        JSON.stringify(json, null, 2)
       )
 
       // 创建一个空的node_modules目录 不然会打包失败
       fs.mkdirSync(path.join(process.cwd(), 'dist/node_modules'), { recursive: true })
 
       const platform = process.env.NSMUSICS_ELECTRON_PLATFORM
-      const targets = resolveBuildTargets(platform)
+      const targets = resolveBuildTargets(
+        platform,
+        process.env.NSMUSICS_ELECTRON_ARCH,
+        process.env.NSMUSICS_ELECTRON_TARGETS
+      )
 
       // 使用electron-builder打包Electron应用程序
       await electronBuilder.build({
+        publish: 'never',
         targets,
         config: {
           appId: 'github.com.nsmusics.xiang.cheng',
           productName: 'NSMusicS',
+          compression: 'maximum',
           electronLanguages: ELECTRON_LANGUAGE_WHITELIST,
           directories: {
             output: path.join(process.cwd(), 'release'), //输出目录
             app: path.join(process.cwd(), 'dist'), //app目录
           },
           asar: true,
+          asarUnpack: ['**/*.node'],
+          afterPack,
+          files: PACKAGED_FILE_PATTERNS,
           win: {
-            target: 'nsis',
+            target: ['nsis', 'zip'],
             icon: 'resources/config/NSMusicS.ico',
             artifactName: '${productName}-Win-${version}-${arch}.${ext}',
           },
@@ -180,7 +306,7 @@ export const viteElectronBuild = (): Plugin => {
           // icon
           // resources/config/png: sudo chmod 0644 *
           linux: {
-            target: ['AppImage', 'deb'],
+            target: ['AppImage', 'deb', 'rpm', 'tar.gz'],
             icon: 'resources/config/png',
             desktop: {
               Icon: '/usr/share/icons/hicolor/512x512/apps/nsmusics.png',
@@ -190,6 +316,9 @@ export const viteElectronBuild = (): Plugin => {
             artifactName: '${productName}-Linux-${version}-${arch}.${ext}',
           },
           deb: {
+            depends: ['mpv'],
+          },
+          rpm: {
             depends: ['mpv'],
           },
           // arch -x86_64 zsh
@@ -228,7 +357,7 @@ export const viteElectronBuild = (): Plugin => {
           // node -p "process.arch"
           // 5.再次打包，很显然这没有github工作流方便，但是涉及到原生编译的情况，github工作流可能并非好使
           mac: {
-            target: 'dmg',
+            target: ['dmg', 'zip'],
             icon: 'resources/config/NSMusicS.icns',
             artifactName: '${productName}-Mac-${version}-${arch}.${ext}',
             hardenedRuntime: true,
