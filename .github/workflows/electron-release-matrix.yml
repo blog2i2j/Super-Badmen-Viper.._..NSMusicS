@@ -81,9 +81,9 @@ jobs:
               electron_platform: 'win32',
               arch: 'ia32',
               runner: 'windows-latest',
-              supported: false,
+              supported: true,
               support_reason:
-                'src/background.ts hardcodes resources/mpv-x86_64-20241124/mpv.exe, so Windows ia32 has no matching runtime asset.',
+                'The workflow downloads a pinned Windows i686 mpv runtime, stages it into resources, and rebuilds native Electron dependencies for ia32 packaging.',
             },
             {
               platform: 'win',
@@ -91,9 +91,9 @@ jobs:
               electron_platform: 'win32',
               arch: 'arm64',
               runner: 'windows-latest',
-              supported: false,
+              supported: true,
               support_reason:
-                'src/background.ts hardcodes resources/mpv-x86_64-20241124/mpv.exe, so Windows arm64 has no matching runtime asset.',
+                'The workflow downloads a pinned Windows arm64 mpv runtime, stages it into resources, and rebuilds native Electron dependencies for arm64 packaging.',
             },
             {
               platform: 'linux',
@@ -113,7 +113,7 @@ jobs:
               runner: 'ubuntu-24.04-arm',
               supported: true,
               support_reason:
-                'The workflow uses a native Ubuntu arm64 runner, installs system mpv, rebuilds Electron native modules, and publishes Linux arm64 AppImage, deb, and tar.gz assets.',
+                'The workflow uses a native Ubuntu arm64 runner, installs system mpv, rebuilds Electron native modules, and publishes Linux arm64 AppImage, deb, rpm, and tar.gz assets.',
             },
             {
               platform: 'mac',
@@ -291,51 +291,60 @@ jobs:
         if: runner.os == 'Windows'
         run: |
           $ErrorActionPreference = 'Stop'
-          $packages = @('mpvio.portable', 'mpvio.install', 'mpv.install', 'mpv')
-          $installedPackage = $null
-          foreach ($package in $packages) {
-            try {
-              choco install $package -y --no-progress
-              $installedPackage = $package
-              break
-            } catch {
-              Write-Host "Chocolatey package failed: $package"
+          $releaseTag = '20260408'
+          switch ('${{ matrix.arch }}') {
+            'x64' {
+              $archiveName = 'mpv-x86_64-20260408-git-e2180e5.7z'
+              $targetDirName = 'mpv-x86_64-20260408'
+              $expectedSha256 = 'fa5696629db058d0a2b0817f054e497d4afb556584a18a73565ffc5454e493fa'
             }
-          }
-          if (-not $installedPackage) {
-            throw 'Unable to install an mpv Chocolatey package for Windows packaging.'
-          }
-
-          $candidateRoots = @()
-          if ($env:ChocolateyInstall) {
-            $candidateRoots += (Join-Path $env:ChocolateyInstall 'lib')
-          }
-          $candidateRoots += 'C:\ProgramData\chocolatey\lib'
-
-          $mpvCandidates = foreach ($root in ($candidateRoots | Select-Object -Unique)) {
-            if (Test-Path $root) {
-              Get-ChildItem -Path $root -Filter mpv.exe -File -Recurse -ErrorAction SilentlyContinue
+            'ia32' {
+              $archiveName = 'mpv-i686-20260408-git-e2180e5.7z'
+              $targetDirName = 'mpv-i686-20260408'
+              $expectedSha256 = 'b8ed6fc4cd08f9f8a4a5d5cd549cae97a55411c60018afdf766126446974735d'
+            }
+            'arm64' {
+              $archiveName = 'mpv-aarch64-20260408-git-e2180e5.7z'
+              $targetDirName = 'mpv-aarch64-20260408'
+              $expectedSha256 = '53033dd82f737cb9de50f611ef58e6137262bb2ef95c45167266f46091f87656'
+            }
+            default {
+              throw "Unsupported Windows mpv target arch: ${{ matrix.arch }}"
             }
           }
 
-          $mpvBinary = $mpvCandidates |
-            Where-Object { $_.FullName -notmatch '\\bin\\' } |
+          $archiveUrl = "https://github.com/shinchiro/mpv-winbuild-cmake/releases/download/$releaseTag/$archiveName"
+          $archivePath = Join-Path $env:RUNNER_TEMP $archiveName
+          $extractRoot = Join-Path $env:RUNNER_TEMP ("mpv-extract-" + '${{ matrix.arch }}')
+          $sevenZip = Get-Command 7z.exe -ErrorAction SilentlyContinue
+          if (-not $sevenZip) {
+            throw '7z.exe is required to extract the pinned Windows mpv runtime archive.'
+          }
+
+          if (Test-Path $extractRoot) {
+            Remove-Item -LiteralPath $extractRoot -Recurse -Force
+          }
+          New-Item -ItemType Directory -Path $extractRoot -Force | Out-Null
+          Invoke-WebRequest -Uri $archiveUrl -OutFile $archivePath
+          $actualSha256 = (Get-FileHash -LiteralPath $archivePath -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($actualSha256 -ne $expectedSha256) {
+            throw "Windows mpv runtime hash mismatch for $archiveName. Expected=$expectedSha256 Actual=$actualSha256"
+          }
+
+          & $sevenZip.Source x $archivePath "-o$extractRoot" -y | Out-Host
+          if ($LASTEXITCODE -ne 0) {
+            throw "7z extraction failed for $archivePath"
+          }
+
+          $mpvBinary = Get-ChildItem -Path $extractRoot -Filter mpv.exe -File -Recurse -ErrorAction SilentlyContinue |
             Sort-Object FullName |
             Select-Object -First 1
-
           if (-not $mpvBinary) {
-            $command = Get-Command mpv.exe -ErrorAction SilentlyContinue
-            if ($command) {
-              $mpvBinary = Get-Item $command.Source
-            }
-          }
-
-          if (-not $mpvBinary) {
-            throw 'Unable to locate mpv.exe after Chocolatey installation.'
+            throw "Unable to locate mpv.exe after extracting $archiveName"
           }
 
           $sourceDir = Split-Path $mpvBinary.FullName -Parent
-          $targetDir = Join-Path $PWD 'resources\mpv-x86_64-20241124'
+          $targetDir = Join-Path $PWD ("resources\" + $targetDirName)
           if (Test-Path $targetDir) {
             Remove-Item -LiteralPath $targetDir -Recurse -Force
           }
@@ -399,60 +408,28 @@ jobs:
           New-Item -ItemType Directory -Path .github/workflows/.tmp -Force | Out-Null
 
           @'
-          import { defineConfig, loadEnv } from 'vite'
-          import vue from '@vitejs/plugin-vue'
-          import AutoImport from 'unplugin-auto-import/vite'
-          import Components from 'unplugin-vue-components/vite'
-          import { NaiveUiResolver } from 'unplugin-vue-components/resolvers'
-          import path from 'node:path'
-
-          export default defineConfig(async ({ mode }) => {
-            const env = loadEnv(mode, process.cwd(), '')
-            const _tailwind = await import('@tailwindcss/vite')
-            const tailwindcss = _tailwind && ('default' in _tailwind ? _tailwind.default : _tailwind)
-
-            return {
-              plugins: [
-                vue({ template: { compilerOptions: { hoistStatic: false } } }),
-                AutoImport({
-                  imports: [
-                    'vue',
-                    {
-                      'naive-ui': ['useDialog', 'useMessage', 'useNotification', 'useLoadingBar'],
-                    },
-                  ],
-                }),
-                Components({
-                  resolvers: [NaiveUiResolver()],
-                }),
-                tailwindcss(),
-              ],
-              base: './',
-              resolve: {
-                alias: {
-                  '@': path.resolve(process.cwd(), 'src'),
-                },
-              },
-              server: {
-                proxy: {
-                  '/api': {
-                    target: env.BACKEND_SERVICE || 'http://localhost:8082',
-                    changeOrigin: true,
-                    rewrite: (value) => value.replace(/^\/api/, ''),
-                  },
-                },
-              },
-            }
-          })
-          '@ | Set-Content -Path .github/workflows/.tmp/vite.ci.config.mjs -Encoding utf8
-
-          @'
           const childProcess = require('node:child_process')
           const fs = require('node:fs')
           const path = require('node:path')
 
           const platformName = process.env.NSMUSICS_ELECTRON_PLATFORM
           const archName = process.env.NSMUSICS_ELECTRON_ARCH
+          const key = `${platformName}:${archName}`
+
+          if (platformName === 'win' && archName !== 'x64') {
+            console.log(
+              JSON.stringify(
+                {
+                  platformName,
+                  archName,
+                  note: 'Skipping frontend native package repair for cross-arch Windows packaging; renderer toolchain binaries run on the x64 Windows host runner.',
+                },
+                null,
+                2
+              )
+            )
+            process.exit(0)
+          }
 
           const packageSets = {
             'win:x64': [
@@ -460,15 +437,6 @@ jobs:
               '@rollup/rollup-win32-x64-msvc',
               '@tailwindcss/oxide-win32-x64-msvc',
               'lightningcss-win32-x64-msvc',
-            ],
-            'win:arm64': [
-              '@esbuild/win32-arm64',
-              '@rollup/rollup-win32-arm64-msvc',
-              '@tailwindcss/oxide-win32-arm64-msvc',
-              'lightningcss-win32-arm64-msvc',
-            ],
-            'win:ia32': [
-              '@esbuild/win32-ia32',
             ],
             'linux:x64': [
               '@esbuild/linux-x64',
@@ -496,7 +464,6 @@ jobs:
             ],
           }
 
-          const key = `${platformName}:${archName}`
           const requiredPackages = packageSets[key] || []
           const packageExists = (packageName) =>
             fs.existsSync(path.join(process.cwd(), 'node_modules', ...packageName.split('/'), 'package.json'))
@@ -506,6 +473,7 @@ jobs:
           console.log(
             JSON.stringify(
               {
+                key,
                 platformName,
                 archName,
                 requiredPackages,
@@ -538,366 +506,6 @@ jobs:
             }
           }
           '@ | Set-Content -Path .github/workflows/.tmp/ensure-platform-frontend-packages.cjs -Encoding utf8
-
-          @'
-          const electronBuilder = require('electron-builder')
-          const fs = require('node:fs')
-          const path = require('node:path')
-
-          const platformName = process.env.NSMUSICS_ELECTRON_PLATFORM
-          const archName = process.env.NSMUSICS_ELECTRON_ARCH
-          const mode = process.argv[2] || 'package'
-          const targetOverride = (process.env.NSMUSICS_ELECTRON_TARGETS || '')
-            .split(',')
-            .map((value) => value.trim())
-            .filter(Boolean)
-
-          const buildWindowsMpvFilters = () => [
-            '**/*',
-            '!7z{,/**}',
-            '!doc{,/**}',
-            '!installer{,/**}',
-            '!**/*.7z',
-            '!**/*.zip',
-            '!**/*.pdf',
-            '!**/*.ignore',
-            '!**/chocolatey*',
-            '!**/updater.bat',
-            '!**/settings.xml',
-          ]
-
-          const electronLanguageWhitelist = [
-            'zh-CN',
-            'zh-TW',
-            'en-US',
-            'es',
-            'fa',
-            'fr',
-            'ja',
-            'pl',
-            'de',
-            'it',
-            'ru',
-            'pt-BR',
-            'sr',
-            'sv',
-            'cs',
-            'nl',
-          ]
-
-          const buildExtraResources = (platformName) => {
-            const resources = [
-              { from: './resources/better_sqlite3.node', to: 'better_sqlite3.node' },
-              { from: './resources/navidrome.db', to: 'navidrome.db' },
-              { from: './resources/nsmusics.db', to: 'nsmusics.db' },
-              { from: './resources/icons', to: 'icons' },
-              { from: './resources/config/NSMusicS.ico', to: 'config/NSMusicS.ico' },
-              { from: './resources/config/png/256x256.png', to: 'config/png/256x256.png' },
-            ]
-
-            if (platformName === 'win') {
-              resources.push({
-                from: './resources/mpv-x86_64-20241124',
-                to: 'mpv-x86_64-20241124',
-                filter: buildWindowsMpvFilters(),
-              })
-            }
-
-            if (platformName === 'mac') {
-              resources.push({
-                from: './resources/mpv-0.39.0',
-                to: 'mpv-0.39.0',
-              })
-            }
-
-            return resources
-          }
-
-          const archMap = {
-            x64: electronBuilder.Arch.x64,
-            ia32: electronBuilder.Arch.ia32,
-            x86: electronBuilder.Arch.ia32,
-            arm64: electronBuilder.Arch.arm64,
-          }
-
-          const platformMap = {
-            win: electronBuilder.Platform.WINDOWS,
-            linux: electronBuilder.Platform.LINUX,
-            mac: electronBuilder.Platform.MAC,
-          }
-
-          const targetMap = {
-            dir: ['dir'],
-            win: ['nsis', 'zip'],
-            linux: ['AppImage', 'deb', 'tar.gz'],
-            mac: ['dmg', 'zip'],
-          }
-
-          const builderArch = archMap[archName]
-          const builderPlatform = platformMap[platformName]
-
-          if (!builderArch) {
-            throw new Error(`Unsupported NSMUSICS_ELECTRON_ARCH: ${archName}`)
-          }
-          if (!builderPlatform) {
-            throw new Error(`Unsupported NSMUSICS_ELECTRON_PLATFORM: ${platformName}`)
-          }
-
-          const requestedTargets =
-            mode === 'dir'
-              ? targetMap.dir
-              : targetOverride.length > 0
-                ? targetOverride
-                : targetMap[platformName]
-          const targets = builderPlatform.createTarget(requestedTargets, builderArch)
-          const diagnosticsDir = path.join(process.cwd(), '.github', 'workflows', '.tmp', 'diagnostics')
-          const safeTargetKey = requestedTargets.join('_').replace(/[^a-zA-Z0-9._-]+/g, '_') || 'default'
-          const buildReportPath = path.join(
-            diagnosticsDir,
-            `electron-builder-${platformName}-${archName}-${mode}-${safeTargetKey}.json`
-          )
-
-          const baseConfig = {
-            appId: 'github.com.nsmusics.xiang.cheng',
-            productName: 'NSMusicS',
-            electronLanguages: electronLanguageWhitelist,
-            directories: {
-              output: path.join(process.cwd(), 'release'),
-              app: path.join(process.cwd(), 'dist'),
-            },
-            asar: true,
-            extraResources: buildExtraResources(platformName),
-          }
-
-          const builderConfig = {
-            ...baseConfig,
-            win: {
-              icon: 'resources/config/NSMusicS.ico',
-              ...(mode === 'dir'
-                ? {}
-                : {
-                    target: ['nsis', 'zip'],
-                    artifactName: '${productName}-Win-${version}-${arch}.${ext}',
-                  }),
-            },
-            linux: {
-              icon: 'resources/config/png',
-              desktop: {
-                Icon: '/usr/share/icons/hicolor/512x512/apps/nsmusics.png',
-              },
-              category: 'Audio',
-              maintainer: 'Xiang Cheng 1774148579@qq.com',
-              ...(mode === 'dir'
-                ? {}
-                : {
-                    target: ['AppImage', 'deb', 'tar.gz'],
-                    artifactName: '${productName}-Linux-${version}-${arch}.${ext}',
-                  }),
-            },
-            mac: {
-              icon: 'resources/config/NSMusicS.icns',
-              hardenedRuntime: true,
-              gatekeeperAssess: false,
-              entitlements: 'build/entitlements.mac.plist',
-              entitlementsInherit: 'build/entitlements.mac.plist',
-              identity: null,
-              ...(mode === 'dir'
-                ? {}
-                : {
-                    target: ['dmg', 'zip'],
-                    artifactName: '${productName}-Mac-${version}-${arch}.${ext}',
-                  }),
-            },
-            ...(mode === 'dir'
-              ? {}
-              : {
-                  deb: {
-                    depends: ['mpv'],
-                  },
-                  nsis: {
-                    oneClick: false,
-                    perMachine: true,
-                    allowElevation: true,
-                    allowToChangeInstallationDirectory: true,
-                    installerIcon: 'resources/config/NSMusicS.ico',
-                    uninstallerIcon: 'resources/config/NSMusicS.ico',
-                    installerHeaderIcon: 'resources/config/NSMusicS.ico',
-                    createDesktopShortcut: true,
-                    createStartMenuShortcut: true,
-                    shortcutName: 'NSMusicS',
-                  },
-                }),
-          }
-
-          const walkFiles = (dirPath) => {
-            if (!fs.existsSync(dirPath)) {
-              return []
-            }
-
-            return fs.readdirSync(dirPath, { withFileTypes: true }).flatMap((entry) => {
-              const fullPath = path.join(dirPath, entry.name)
-              return entry.isDirectory() ? walkFiles(fullPath) : [fullPath]
-            })
-          }
-
-          const validateReleaseInventory = (releaseFiles) => {
-            const relativeFiles = releaseFiles.map((targetPath) =>
-              path.relative(process.cwd(), targetPath).replace(/\\/g, '/')
-            )
-
-            const isForbiddenReleaseFile = (relativePath) => {
-              if (
-                relativePath.includes('/resources/node/linux/') ||
-                relativePath.includes('/resources/node/macos/') ||
-                relativePath.includes('/resources/node/win/')
-              ) {
-                return true
-              }
-
-              if (platformName !== 'win' && relativePath.includes('/resources/mpv-x86_64-20241124/')) {
-                return true
-              }
-
-              if (platformName !== 'mac' && relativePath.includes('/resources/mpv-0.39.0/')) {
-                return true
-              }
-
-              if (!relativePath.includes('/resources/mpv-x86_64-20241124/')) {
-                return false
-              }
-
-              return (
-                relativePath.includes('/resources/mpv-x86_64-20241124/7z/') ||
-                relativePath.includes('/resources/mpv-x86_64-20241124/doc/') ||
-                relativePath.includes('/resources/mpv-x86_64-20241124/installer/') ||
-                relativePath.endsWith('.7z') ||
-                relativePath.endsWith('.pdf') ||
-                relativePath.endsWith('.ignore') ||
-                relativePath.endsWith('/updater.bat') ||
-                relativePath.endsWith('/settings.xml') ||
-                relativePath.toLowerCase().includes('chocolatey')
-              )
-            }
-
-            const forbiddenFiles = relativeFiles.filter(isForbiddenReleaseFile)
-            if (forbiddenFiles.length > 0) {
-              throw new Error(
-                `Packaged release contains forbidden resources for ${platformName}-${archName}: ${forbiddenFiles.join(
-                  ', '
-                )}`
-              )
-            }
-          }
-
-          const expectedArtifactMatchers = {
-            nsis: (value) => value.endsWith('.exe') && !value.endsWith('.exe.blockmap'),
-            zip: (value) => value.endsWith('.zip'),
-            AppImage: (value) => value.endsWith('.AppImage'),
-            deb: (value) => value.endsWith('.deb'),
-            'tar.gz': (value) => value.endsWith('.tar.gz'),
-            dmg: (value) => value.endsWith('.dmg') && !value.endsWith('.dmg.blockmap'),
-          }
-
-          console.log(
-            `[ci-electron-builder] mode=${mode} platform=${platformName} arch=${archName} targets=${requestedTargets.join(',')}`
-          )
-          console.log(
-            JSON.stringify(
-              {
-                mode,
-                platformName,
-                archName,
-                targetOverride,
-                configuredTargets: {
-                  win: builderConfig.win.target || null,
-                  linux: builderConfig.linux.target || null,
-                  mac: builderConfig.mac.target || null,
-                },
-              },
-              null,
-              2
-            )
-          )
-
-          async function main() {
-            fs.mkdirSync(diagnosticsDir, { recursive: true })
-
-            const artifactPaths = (await electronBuilder.build({
-              publish: 'never',
-              targets,
-              config: builderConfig,
-            })).map((targetPath) => path.resolve(targetPath))
-
-            const releaseDir = path.join(process.cwd(), 'release')
-            const releaseFiles = walkFiles(releaseDir).map((targetPath) => path.resolve(targetPath))
-            validateReleaseInventory(releaseFiles)
-
-            const missingRequestedTargets =
-              mode === 'dir'
-                ? []
-                : requestedTargets.filter((target) => {
-                    const matcher = expectedArtifactMatchers[target]
-                    if (!matcher) {
-                      throw new Error(`No expected artifact matcher configured for target: ${target}`)
-                    }
-
-                    return !artifactPaths.some((targetPath) => matcher(path.basename(targetPath)))
-                  })
-
-            const buildReport = {
-              mode,
-              platformName,
-              archName,
-              targetOverride,
-              requestedTargets,
-              configuredTargets: {
-                win: builderConfig.win.target || null,
-                linux: builderConfig.linux.target || null,
-                mac: builderConfig.mac.target || null,
-              },
-              artifactPaths,
-              releaseFiles,
-              missingRequestedTargets,
-            }
-
-            fs.writeFileSync(buildReportPath, JSON.stringify(buildReport, null, 2) + '\n')
-            console.log(`[ci-electron-builder] wrote build report: ${buildReportPath}`)
-            console.log(
-              JSON.stringify(
-                {
-                  artifactPaths,
-                  releaseFiles,
-                  missingRequestedTargets,
-                },
-                null,
-                2
-              )
-            )
-
-            if (missingRequestedTargets.length > 0) {
-              throw new Error(
-                `electron-builder completed without requested target artifacts for ${missingRequestedTargets.join(
-                  ', '
-                )}. Returned artifacts: ${artifactPaths.join(', ') || '(none)'}. Release files: ${
-                  releaseFiles.join(', ') || '(none)'
-                }`
-              )
-            }
-          }
-
-          main().catch((error) => {
-            const errorText = (error && (error.stack || error.message)) || String(error)
-            const commandSafe = errorText
-              .replace(/%/g, '%25')
-              .replace(/\r/g, '%0D')
-              .replace(/\n/g, '%0A')
-            console.error(
-              `::error title=Electron Builder ${platformName}-${archName} ${mode}::${commandSafe}`
-            )
-            console.error(error)
-            process.exit(1)
-          })
-          '@ | Set-Content -Path .github/workflows/.tmp/run-electron-builder.cjs -Encoding utf8
 
           @'
           const childProcess = require('node:child_process')
@@ -969,17 +577,17 @@ jobs:
           const relativeToBundle = (targetPath) => path.relative(bundleRoot, targetPath).replace(/\\/g, '/')
           const fileBasename = (targetPath) => path.basename(targetPath)
 
-          // Reference bytes are anchored to the published NSMusicS-v2.3.0 release assets.
-          // The hard floors are intentionally looser than the warning band so successful
-          // package-size reductions warn for review instead of failing the whole release.
+          // Reference bytes are anchored to established NSMusicS release assets.
+          // Smaller packages are generally desirable, so lower-side checks are kept loose and
+          // only guard against obviously incomplete outputs rather than penalizing reductions.
           const expectedSizeProfiles = {
             win: {
               x64: {
                 exe: {
                   referenceBytes: 163438490,
-                  warnBelowFactor: 0.78,
+                  warnBelowFactor: 0.7,
                   warnAboveFactor: 1.2,
-                  failBelowFactor: 0.73,
+                  failBelowFactor: 0.55,
                   failAboveFactor: 1.35,
                 },
                 exe_blockmap: {
@@ -991,9 +599,55 @@ jobs:
                 },
                 zip: {
                   referenceBytes: 216856608,
-                  warnBelowFactor: 0.78,
+                  warnBelowFactor: 0.7,
                   warnAboveFactor: 1.18,
-                  failBelowFactor: 0.72,
+                  failBelowFactor: 0.55,
+                  failAboveFactor: 1.35,
+                },
+              },
+              ia32: {
+                exe: {
+                  referenceBytes: 163438490,
+                  warnBelowFactor: 0.7,
+                  warnAboveFactor: 1.18,
+                  failBelowFactor: 0.55,
+                  failAboveFactor: 1.35,
+                },
+                exe_blockmap: {
+                  referenceBytes: 171899,
+                  warnBelowFactor: 0.5,
+                  warnAboveFactor: 1.7,
+                  failBelowFactor: 0.25,
+                  failAboveFactor: 3.0,
+                },
+                zip: {
+                  referenceBytes: 216856608,
+                  warnBelowFactor: 0.7,
+                  warnAboveFactor: 1.18,
+                  failBelowFactor: 0.55,
+                  failAboveFactor: 1.35,
+                },
+              },
+              arm64: {
+                exe: {
+                  referenceBytes: 163438490,
+                  warnBelowFactor: 0.7,
+                  warnAboveFactor: 1.18,
+                  failBelowFactor: 0.55,
+                  failAboveFactor: 1.35,
+                },
+                exe_blockmap: {
+                  referenceBytes: 171899,
+                  warnBelowFactor: 0.5,
+                  warnAboveFactor: 1.7,
+                  failBelowFactor: 0.25,
+                  failAboveFactor: 3.0,
+                },
+                zip: {
+                  referenceBytes: 216856608,
+                  warnBelowFactor: 0.7,
+                  warnAboveFactor: 1.18,
+                  failBelowFactor: 0.55,
                   failAboveFactor: 1.35,
                 },
               },
@@ -1007,19 +661,26 @@ jobs:
                   failBelowFactor: 0.72,
                   failAboveFactor: 1.35,
                 },
+                rpm: {
+                  referenceBytes: 104383034,
+                  warnBelowFactor: 0.78,
+                  warnAboveFactor: 1.2,
+                  failBelowFactor: 0.7,
+                  failAboveFactor: 1.35,
+                },
                 targz: {
                   referenceBytes: 161745939,
-                  warnBelowFactor: 0.78,
-                  warnAboveFactor: 1.15,
-                  failBelowFactor: 0.67,
-                  failAboveFactor: 1.3,
+                  warnBelowFactor: 0.8,
+                  warnAboveFactor: 1.18,
+                  failBelowFactor: 0.65,
+                  failAboveFactor: 1.35,
                 },
                 appimage: {
                   referenceBytes: 162956976,
-                  warnBelowFactor: 0.78,
-                  warnAboveFactor: 1.15,
-                  failBelowFactor: 0.67,
-                  failAboveFactor: 1.3,
+                  warnBelowFactor: 0.8,
+                  warnAboveFactor: 1.18,
+                  failBelowFactor: 0.65,
+                  failAboveFactor: 1.35,
                 },
               },
               arm64: {
@@ -1030,18 +691,25 @@ jobs:
                   failBelowFactor: 0.6,
                   failAboveFactor: 1.7,
                 },
-                targz: {
-                  referenceBytes: 154 * megabyte,
+                rpm: {
+                  referenceBytes: 100 * megabyte,
                   warnBelowFactor: 0.75,
+                  warnAboveFactor: 1.35,
+                  failBelowFactor: 0.6,
+                  failAboveFactor: 1.7,
+                },
+                targz: {
+                  referenceBytes: 100 * megabyte,
+                  warnBelowFactor: 0.95,
                   warnAboveFactor: 1.3,
-                  failBelowFactor: 0.65,
+                  failBelowFactor: 0.9,
                   failAboveFactor: 1.6,
                 },
                 appimage: {
-                  referenceBytes: 155 * megabyte,
-                  warnBelowFactor: 0.75,
+                  referenceBytes: 76 * megabyte,
+                  warnBelowFactor: 0.95,
                   warnAboveFactor: 1.3,
-                  failBelowFactor: 0.65,
+                  failBelowFactor: 0.9,
                   failAboveFactor: 1.6,
                 },
               },
@@ -1050,9 +718,9 @@ jobs:
               x64: {
                 dmg: {
                   referenceBytes: 205706082,
-                  warnBelowFactor: 0.78,
+                  warnBelowFactor: 0.58,
                   warnAboveFactor: 1.15,
-                  failBelowFactor: 0.65,
+                  failBelowFactor: 0.5,
                   failAboveFactor: 1.25,
                 },
                 dmg_blockmap: {
@@ -1064,18 +732,18 @@ jobs:
                 },
                 zip: {
                   referenceBytes: 205445399,
-                  warnBelowFactor: 0.78,
+                  warnBelowFactor: 0.58,
                   warnAboveFactor: 1.15,
-                  failBelowFactor: 0.65,
+                  failBelowFactor: 0.5,
                   failAboveFactor: 1.25,
                 },
               },
               arm64: {
                 dmg: {
                   referenceBytes: 176798083,
-                  warnBelowFactor: 0.82,
+                  warnBelowFactor: 0.64,
                   warnAboveFactor: 1.15,
-                  failBelowFactor: 0.74,
+                  failBelowFactor: 0.5,
                   failAboveFactor: 1.25,
                 },
                 dmg_blockmap: {
@@ -1087,9 +755,9 @@ jobs:
                 },
                 zip: {
                   referenceBytes: 176469444,
-                  warnBelowFactor: 0.82,
+                  warnBelowFactor: 0.64,
                   warnAboveFactor: 1.15,
-                  failBelowFactor: 0.74,
+                  failBelowFactor: 0.5,
                   failAboveFactor: 1.25,
                 },
               },
@@ -1148,6 +816,12 @@ jobs:
                     `${productName}-Linux-${version}-${archName === 'x64' ? 'amd64' : archName}.deb`,
                 },
                 {
+                  kind: 'rpm',
+                  matches: (value) => value.endsWith('.rpm'),
+                  outputName: () =>
+                    `${productName}-Linux-${version}-${archName === 'x64' ? 'x86_64' : archName}.rpm`,
+                },
+                {
                   kind: 'targz',
                   matches: (value) => value.endsWith('.tar.gz'),
                   outputName: () => `${productName}-Linux-${version}-${archName}.tar.gz`,
@@ -1193,6 +867,17 @@ jobs:
             appendSummary(`- PASS Linux deb dependency metadata includes mpv: ${path.basename(debPath)}`)
           }
 
+          const validateLinuxRpmDepends = (rpmPath) => {
+            if (platformName !== 'linux') {
+              return
+            }
+            const dependsOutput = runCommand('rpm', ['-qpR', rpmPath]).trim()
+            if (!/(^|\r?\n)mpv(?:\s|[<>=()]|$)/m.test(dependsOutput)) {
+              fail(`Linux rpm package does not declare required mpv dependency: ${relativeToRoot(rpmPath)}`)
+            }
+            appendSummary(`- PASS Linux rpm dependency metadata includes mpv: ${path.basename(rpmPath)}`)
+          }
+
           const spec = baseSpecs[platformName]
           if (!spec) {
             fail(`Unsupported publish asset staging platform label: ${platformLabel}`)
@@ -1209,7 +894,7 @@ jobs:
             .sort()
           const packageLikeFiles = releaseFiles
             .filter((targetPath) =>
-              /(\.AppImage|\.deb|\.tar\.gz|\.zip|\.dmg|\.dmg\.blockmap|\.exe|\.exe\.blockmap)$/i.test(
+              /(\.AppImage|\.deb|\.rpm|\.tar\.gz|\.zip|\.dmg|\.dmg\.blockmap|\.exe|\.exe\.blockmap)$/i.test(
                 fileBasename(targetPath)
               )
             )
@@ -1264,6 +949,9 @@ jobs:
 
             if (assetSpec.kind === 'deb') {
               validateLinuxDebDepends(sourcePath)
+            }
+            if (assetSpec.kind === 'rpm') {
+              validateLinuxRpmDepends(sourcePath)
             }
 
             if (path.dirname(sourcePath) !== releaseDir) {
@@ -1578,17 +1266,31 @@ jobs:
             fail(`Unable to uniquely identify packaged Linux executable under ${unpackedRoot}`)
           }
 
-          const validateWindowsMpv = (baseDir) => {
-            const mpvPath = ensureExists(
-              path.join(baseDir, 'mpv-x86_64-20241124', 'mpv.exe'),
-              'Windows mpv runtime'
-            )
-            assertBinaryArch(mpvPath, 'x64', 'Windows mpv runtime')
-            if (archName !== 'x64') {
-              fail(
-                `Windows target ${archName} is not supportable in the current repository state: src/background.ts hardcodes resources/mpv-x86_64-20241124/mpv.exe and the bundled mpv binary is x64-only.`
-              )
+          const resolveWindowsMpvRuntimeDir = (baseDir) => {
+            const archAliases = {
+              x64: ['x86_64'],
+              ia32: ['i686'],
+              arm64: ['aarch64', 'arm64'],
             }
+            const aliases = archAliases[archName] || [archName]
+            const candidates = fs
+              .readdirSync(baseDir, { withFileTypes: true })
+              .filter((entry) => entry.isDirectory() && /^mpv[-_]/i.test(entry.name))
+              .map((entry) => entry.name)
+              .filter((name) => aliases.some((alias) => name.toLowerCase().includes(alias)))
+              .sort((left, right) => right.localeCompare(left))
+
+            if (candidates.length === 0) {
+              fail(`Unable to locate Windows mpv runtime directory for ${archName} under ${baseDir}`)
+            }
+
+            return path.join(baseDir, candidates[0])
+          }
+
+          const validateWindowsMpv = (baseDir) => {
+            const mpvRuntimeDir = resolveWindowsMpvRuntimeDir(baseDir)
+            const mpvPath = ensureExists(path.join(mpvRuntimeDir, 'mpv.exe'), 'Windows mpv runtime')
+            assertBinaryArch(mpvPath, archName, 'Windows mpv runtime')
           }
 
           const validateMacMpv = (baseDir) => {
@@ -1603,16 +1305,17 @@ jobs:
             appendSummary(`### Repository Compatibility Audit: ${platformName}-${archName}`)
 
             if (platformName === 'win') {
-              ensureExists(
-                path.join(rootDir, 'resources', 'mpv-x86_64-20241124', 'mpv.exe'),
-                'Prepared Windows mpv runtime'
-              )
-              if (archName !== 'x64') {
+              const backgroundSource = fs.readFileSync(path.join(rootDir, 'src', 'background.ts'), 'utf8')
+              if (
+                !backgroundSource.includes('function resolveWindowsMpvBinary()') ||
+                !backgroundSource.includes('binary: resolveWindowsMpvBinary()')
+              ) {
                 fail(
-                  `Repository support audit failed for ${platformName}-${archName}: src/background.ts hardcodes resources/mpv-x86_64-20241124/mpv.exe and the workflow only provisions an x64 Windows mpv runtime.`
+                  `Repository support audit failed for ${platformName}-${archName}: src/background.ts must dynamically resolve the packaged Windows mpv runtime by process.arch.`
                 )
               }
-              appendSummary(`- PASS Windows source path contract is consistent with the prepared CI mpv runtime for ${archName}.`)
+              validateWindowsMpv(path.join(rootDir, 'resources'))
+              appendSummary(`- PASS Windows repository runtime resolves and validates the prepared mpv runtime for ${archName}.`)
               note(`Repository compatibility audit passed for ${platformName}-${archName}`)
               return
             }
@@ -1819,25 +1522,9 @@ jobs:
           NSMUSICS_ELECTRON_ARCH: ${{ matrix.arch }}
         run: node .github/workflows/.tmp/validate-packaged-native.cjs preflight
 
-      - name: Build renderer bundle
-        env:
-          NODE_OPTIONS: --max-old-space-size=6144
-        run: |
-          $diagnosticsDir = '.github/workflows/.tmp/diagnostics'
-          New-Item -ItemType Directory -Path $diagnosticsDir -Force | Out-Null
-          $logPath = Join-Path $diagnosticsDir 'vite-build.log'
-          npx vite build --config .github/workflows/.tmp/vite.ci.config.mjs *>&1 | Tee-Object -FilePath $logPath
-          if ($LASTEXITCODE -ne 0) {
-            exit $LASTEXITCODE
-          }
-
-      - name: Build Electron main process bundle
-        run: |
-          node -e "require('esbuild').buildSync({ entryPoints: ['src/background.ts'], bundle: true, outfile: 'dist/background.js', platform: 'node', target: 'node12', external: ['electron'] })"
-          node -e "const fs=require('fs'); const path=require('path'); const source=JSON.parse(fs.readFileSync('package.json','utf-8')); const runtimeDependencyAllowlist=['axios','better-sqlite3','fast-xml-parser','moment','node-cache','node-mpv','node-taglib-sharp','spark-md5','uuid']; const sourceDependencies=source.dependencies || {}; const runtimeDependencies=Object.fromEntries(runtimeDependencyAllowlist.flatMap((packageName)=>sourceDependencies[packageName] ? [[packageName, sourceDependencies[packageName]]] : [])); const runtime={ name:source.name, version:source.version, homepage:source.homepage, author:source.author, description:source.description, license:source.license, main:'background.js', dependencies:runtimeDependencies }; fs.mkdirSync(path.join(process.cwd(),'dist','node_modules'), { recursive: true }); fs.writeFileSync(path.join(process.cwd(),'dist','package.json'), JSON.stringify(runtime, null, 2));"
-
       - name: Build distributable artifacts
         env:
+          NODE_OPTIONS: --max-old-space-size=6144
           NSMUSICS_ELECTRON_PLATFORM: ${{ matrix.platform }}
           NSMUSICS_ELECTRON_ARCH: ${{ matrix.arch }}
           USE_SYSTEM_FPM: ${{ runner.os == 'Linux' && 'true' || '' }}
@@ -1934,21 +1621,23 @@ jobs:
               }
           }
 
-          function Reset-ReleaseDirectory() {
-            if (Test-Path 'release') {
-              Remove-Item -LiteralPath 'release' -Recurse -Force -ErrorAction SilentlyContinue
+          function Reset-BuildOutputs() {
+            foreach ($targetPath in @('dist', 'release')) {
+              if (Test-Path $targetPath) {
+                Remove-Item -LiteralPath $targetPath -Recurse -Force -ErrorAction SilentlyContinue
+              }
             }
             New-Item -ItemType Directory -Path 'release' -Force | Out-Null
           }
 
           if ('${{ matrix.platform }}' -eq 'linux' -and '${{ matrix.arch }}' -eq 'arm64') {
-            $targets = @('AppImage', 'deb', 'tar.gz')
+            $targets = @('AppImage', 'deb', 'rpm', 'tar.gz')
             foreach ($target in $targets) {
               $safeTarget = $target.Replace('.', '_').Replace('/', '_')
               $targetLogPath = Join-Path $diagnosticsDir ("electron-builder-$safeTarget.log")
-              Reset-ReleaseDirectory
+              Reset-BuildOutputs
               $env:NSMUSICS_ELECTRON_TARGETS = $target
-              node .github/workflows/.tmp/run-electron-builder.cjs package *>&1 | Tee-Object -FilePath $targetLogPath
+              npx vite build *>&1 | Tee-Object -FilePath $targetLogPath
               $targetExitCode = $LASTEXITCODE
               if ($targetExitCode -ne 0) {
                 exit $targetExitCode
@@ -1960,6 +1649,9 @@ jobs:
                 }
                 'deb' {
                   Collect-ReleaseArtifacts -label 'linux-arm64 deb' -patterns @('*.deb')
+                }
+                'rpm' {
+                  Collect-ReleaseArtifacts -label 'linux-arm64 rpm' -patterns @('*.rpm')
                 }
                 'tar.gz' {
                   Collect-ReleaseArtifacts -label 'linux-arm64 tar.gz' -patterns @('*.tar.gz')
@@ -1978,9 +1670,9 @@ jobs:
               for ($attempt = 1; $attempt -le $maxAttempts; $attempt++) {
                 $logSuffix = if ($maxAttempts -gt 1) { "$target-attempt$attempt" } else { $target }
                 $targetLogPath = Join-Path $diagnosticsDir ("electron-builder-$logSuffix.log")
-                Reset-ReleaseDirectory
+                Reset-BuildOutputs
                 $env:NSMUSICS_ELECTRON_TARGETS = $target
-                node .github/workflows/.tmp/run-electron-builder.cjs package *>&1 | Tee-Object -FilePath $targetLogPath
+                npx vite build *>&1 | Tee-Object -FilePath $targetLogPath
                 $targetExitCode = $LASTEXITCODE
                 if ($targetExitCode -eq 0) {
                   $targetSucceeded = $true
@@ -2010,7 +1702,9 @@ jobs:
             Restore-CollectedArtifacts
             Remove-Item Env:NSMUSICS_ELECTRON_TARGETS -ErrorAction SilentlyContinue
           } else {
-            node .github/workflows/.tmp/run-electron-builder.cjs package *>&1 | Tee-Object -FilePath $logPath
+            Remove-Item Env:NSMUSICS_ELECTRON_TARGETS -ErrorAction SilentlyContinue
+            Reset-BuildOutputs
+            npx vite build *>&1 | Tee-Object -FilePath $logPath
             if ($LASTEXITCODE -ne 0) {
               exit $LASTEXITCODE
             }
@@ -2024,7 +1718,13 @@ jobs:
 
       - name: List release files
         run: |
-          node -e "const fs=require('fs'); const path=require('path'); const root='release'; const walk=(dir)=>fs.readdirSync(dir,{withFileTypes:true}).flatMap((entry)=>{const full=path.join(dir,entry.name); return entry.isDirectory()?walk(full):[full]}); if(!fs.existsSync(root)){throw new Error('release output not found')} const files=walk(root); if(files.length===0){throw new Error('release output is empty')} console.log(files.join('\n'));"
+          $diagnosticsDir = '.github/workflows/.tmp/diagnostics'
+          New-Item -ItemType Directory -Path $diagnosticsDir -Force | Out-Null
+          $inventoryPath = Join-Path $diagnosticsDir 'release-file-inventory.txt'
+          node -e "const fs=require('fs'); const path=require('path'); const root='release'; const walk=(dir)=>fs.readdirSync(dir,{withFileTypes:true}).flatMap((entry)=>{const full=path.join(dir,entry.name); return entry.isDirectory()?walk(full):[full]}); if(!fs.existsSync(root)){throw new Error('release output not found')} const files=walk(root).sort(); if(files.length===0){throw new Error('release output is empty')} console.log(files.map((file)=>file + '\t' + fs.statSync(file).size).join('\n'));" *>&1 | Tee-Object -FilePath $inventoryPath
+          if ($LASTEXITCODE -ne 0) {
+            exit $LASTEXITCODE
+          }
 
       - name: Stage upload bundle
         env:
@@ -2176,10 +1876,10 @@ jobs:
               }
               if (
                 /(^|\/)(resources|Resources)\/node\/(linux|macos|win)\//.test(lowerPath) ||
-                /mpv-x86_64-20241124\/(7z|doc|installer)\//.test(lowerPath) ||
-                /mpv-x86_64-20241124\/.*\.(7z|pdf|ignore)$/.test(lowerPath) ||
-                /mpv-x86_64-20241124\/chocolatey/.test(lowerPath) ||
-                /mpv-x86_64-20241124\/(updater\.bat|settings\.xml)$/.test(lowerPath)
+                /mpv[-_][^/]*(x86_64|i686|aarch64|arm64|x86)[^/]*\/(7z|doc|installer)\//.test(lowerPath) ||
+                /mpv[-_][^/]*(x86_64|i686|aarch64|arm64|x86)[^/]*\/.*\.(7z|pdf|ignore)$/.test(lowerPath) ||
+                /mpv[-_][^/]*(x86_64|i686|aarch64|arm64|x86)[^/]*\/chocolatey/.test(lowerPath) ||
+                /mpv[-_][^/]*(x86_64|i686|aarch64|arm64|x86)[^/]*\/(updater\.bat|settings\.xml)$/.test(lowerPath)
               ) {
                 forbiddenPaths.push(relativePath)
               }
@@ -2328,6 +2028,17 @@ jobs:
               throw "dpkg-deb extraction failed for $debPath"
             }
             Write-InspectionSummary -kind 'deb' -rootPath $debExtractDir -sourcePath $debPath
+            Write-AsarInspectionSummary -kind 'deb' -rootPath $debExtractDir
+
+            $rpmPath = Get-SinglePublishAsset '*.rpm' 'Linux rpm package'
+            $rpmExtractDir = Join-Path $scratchRoot 'rpm-extracted'
+            New-Item -ItemType Directory -Path $rpmExtractDir -Force | Out-Null
+            & bsdtar -xf $rpmPath -C $rpmExtractDir
+            if ($LASTEXITCODE -ne 0) {
+              throw "rpm extraction failed for $rpmPath"
+            }
+            Write-InspectionSummary -kind 'rpm' -rootPath $rpmExtractDir -sourcePath $rpmPath
+            Write-AsarInspectionSummary -kind 'rpm' -rootPath $rpmExtractDir
 
             $appImagePath = Get-SinglePublishAsset '*.AppImage' 'Linux AppImage package'
             $appImageExtractDir = Join-Path $scratchRoot 'appimage-extracted'
@@ -2347,6 +2058,7 @@ jobs:
               throw "AppImage extraction output not found: $appImageRoot"
             }
             Write-InspectionSummary -kind 'AppImage' -rootPath $appImageRoot -sourcePath $appImagePath
+            Write-AsarInspectionSummary -kind 'AppImage' -rootPath $appImageRoot
           } elseif ($env:NSMUSICS_ELECTRON_PLATFORM -eq 'mac') {
             $zipPath = Get-SinglePublishAsset '*.zip' 'macOS packaged zip'
             $zipExtractDir = Join-Path $scratchRoot 'zip-extracted'
@@ -2457,6 +2169,7 @@ jobs:
           name: ${{ env.ARTIFACT_PREFIX }}-failure-${{ env.BUILD_MODE }}-${{ matrix.platform_name }}-${{ matrix.arch }}
           path: |
             NSMusicS-Electron/.github/workflows/.tmp/diagnostics/**
+            NSMusicS-Electron/.github/workflows/.out/${{ env.BUILD_MODE }}/${{ matrix.platform_name }}-${{ matrix.arch }}/**
             NSMusicS-Electron/release/**/*.log
             NSMusicS-Electron/release/**/builder-debug.yml
             NSMusicS-Electron/release/**/builder-effective-config.yaml
@@ -2783,6 +2496,12 @@ jobs:
             return `${sign}${value.toFixed(1)}%`
           }
 
+          const normalizeReleaseTag = (tag) =>
+            (tag || '')
+              .replace(/^validate-/, '')
+              .replace(/^electron-v/, 'v')
+              .replace(/^NSMusicS-v/, 'v')
+
           const classifyAssetSize = (asset) => {
             if (asset.size_bytes < asset.fail_min_bytes || asset.size_bytes > asset.fail_max_bytes) {
               return 'FAIL'
@@ -2831,15 +2550,24 @@ jobs:
             )
 
           const assetLines = []
-          const notes = [
-            '# NSMusicS Electron Release',
-            '',
-            `- Build mode: ${process.env.BUILD_MODE}`,
-            `- Git ref: ${process.env.GITHUB_REF}`,
-            `- Commit: ${process.env.GITHUB_SHA}`,
-            '',
-            '## Included Targets',
+          const rawTag = process.env.GITHUB_REF_NAME || ''
+          const normalizedTag = normalizeReleaseTag(rawTag)
+          const releaseNotesCandidates = [
+            path.resolve('doc', 'releases', `NSMusicS-${normalizedTag}.md`),
+            path.resolve('doc', 'releases', `${rawTag}.md`),
           ]
+          const customReleaseNotesPath = releaseNotesCandidates.find((filePath) => fs.existsSync(filePath))
+          const notes = customReleaseNotesPath
+            ? [fs.readFileSync(customReleaseNotesPath, 'utf8').trim(), '', '## Included Targets']
+            : [
+                '# NSMusicS Electron Release',
+                '',
+                `- Build mode: ${process.env.BUILD_MODE}`,
+                `- Git ref: ${process.env.GITHUB_REF}`,
+                `- Commit: ${process.env.GITHUB_SHA}`,
+                '',
+                '## Included Targets',
+              ]
 
           for (const entry of entries) {
             notes.push(`- ${entry.platform}-${entry.arch}`)
@@ -2933,6 +2661,12 @@ jobs:
           fs.writeFileSync(path.join(root, 'release-asset-audit.json'), `${JSON.stringify(auditRows, null, 2)}\n`)
 
           if (summaryPath) {
+            if (customReleaseNotesPath) {
+              fs.appendFileSync(
+                summaryPath,
+                `## Release Notes Source\n- Custom file: ${path.relative(process.cwd(), customReleaseNotesPath).replace(/\\\\/g, '/')}\n`
+              )
+            }
             fs.appendFileSync(summaryPath, `${auditLines.join('\n')}\n`)
           }
           NODE
@@ -3064,13 +2798,19 @@ jobs:
             current_asset_names="$(retry_gh release view "${tag}" --json assets --jq '.assets[].name')"
             while IFS= read -r asset_name; do
               keep_asset=false
+              preserve_external_asset=false
               for expected_name in "${expected_asset_names[@]}"; do
                 if [ "${expected_name}" = "${asset_name}" ]; then
                   keep_asset=true
                   break
                 fi
               done
-              if [ -n "${asset_name}" ] && [ "${keep_asset}" = false ]; then
+              case "${asset_name}" in
+                NSMusicS-Web-*)
+                  preserve_external_asset=true
+                  ;;
+              esac
+              if [ -n "${asset_name}" ] && [ "${keep_asset}" = false ] && [ "${preserve_external_asset}" = false ]; then
                 retry_gh release delete-asset "${tag}" "${asset_name}" --yes
               fi
             done <<< "${current_asset_names}"
