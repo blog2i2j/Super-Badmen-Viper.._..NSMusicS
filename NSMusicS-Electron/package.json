@@ -13,6 +13,7 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
+    "build:web": "vite build --mode web",
     "build:win": "powershell -ExecutionPolicy Bypass -File ./scripts/electron/win/build.ps1",
     "build:linux": "bash ./scripts/electron/linux/build.sh",
     "build:mac": "bash -lc \"if [ \\\"$(uname -m)\\\" = \\\"arm64\\\" ]; then bash ./scripts/electron/macos/arm64/build.sh; else bash ./scripts/electron/macos/x64/build.sh; fi\"",
