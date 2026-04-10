@@ -1,5 +1,6 @@
 import axios from 'axios'
 import { store_server_user_model } from '@/server/server_management/store_server_user_model'
+import { APP_VERSION } from '@/config/app_version'
 
 export class Jellyfin_Api_Services_Web {
   protected readonly baseUrl: string
@@ -28,7 +29,7 @@ export class Jellyfin_Api_Services_Web {
         store_server_user_model.authorization_of_Je.length > 0
       ) {
         const headers = {
-          Authorization: `MediaBrowser Token="${store_server_user_model.authorization_of_Je}", Client="NSMusicS", Device="Desktop Client", DeviceId="NineSong", Version="2.3.1"`,
+          Authorization: `MediaBrowser Token="${store_server_user_model.authorization_of_Je}", Client="NSMusicS", Device="Desktop Client", DeviceId="NineSong", Version="${APP_VERSION}"`,
         }
 
         const queryString = params ? new URLSearchParams(params).toString() : ''

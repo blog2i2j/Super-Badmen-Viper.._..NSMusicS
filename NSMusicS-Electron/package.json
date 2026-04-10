@@ -11,6 +11,10 @@
   "private": true,
   "license": "AGPL - 3.0",
   "scripts": {
+    "version:sync": "node ./scripts/release/sync-version.mjs",
+    "predev": "npm run version:sync",
+    "prebuild": "npm run version:sync",
+    "prebuild:web": "npm run version:sync",
     "dev": "vite",
     "build": "vite build",
     "build:web": "vite build --mode web",

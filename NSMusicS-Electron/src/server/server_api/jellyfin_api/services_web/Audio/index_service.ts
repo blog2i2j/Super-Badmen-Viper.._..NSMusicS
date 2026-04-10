@@ -2,6 +2,7 @@ import { Jellyfin_Api_Services_Web } from '../Jellyfin_Api_Services_Web'
 import axios from 'axios'
 import { store_server_user_model } from '@/server/server_management/store_server_user_model'
 import { store_server_users } from '@/server/server_management/store_server_users'
+import { APP_VERSION } from '@/config/app_version'
 
 export class Audio_ApiService_of_Je extends Jellyfin_Api_Services_Web {
   /**
@@ -139,7 +140,7 @@ export class Audio_ApiService_of_Je extends Jellyfin_Api_Services_Web {
       const lyricUrl = `${baseUrl}/emby/Items/${itemId}/${PresentationUniqueKey}/Subtitles/2/Stream.js`
       const response2 = await axios.get(lyricUrl, {
         headers: {
-          Authorization: `MediaBrowser Token="${token}", Client="NSMusicS", Device="Desktop Client", DeviceId="NineSong", Version="2.3.1"`,
+          Authorization: `MediaBrowser Token="${token}", Client="NSMusicS", Device="Desktop Client", DeviceId="NineSong", Version="${APP_VERSION}"`,
         },
         timeout: 8000,
         responseType: 'json',
@@ -158,7 +159,7 @@ export class Audio_ApiService_of_Je extends Jellyfin_Api_Services_Web {
         const lyricUrl = `${baseUrl}/emby/Items/${itemId}/${MediaSourcesID}/Subtitles/2/Stream.js`
         const response2 = await axios.get(lyricUrl, {
           headers: {
-            Authorization: `MediaBrowser Token="${token}", Client="NSMusicS", Device="Desktop Client", DeviceId="NineSong", Version="2.3.1"`,
+            Authorization: `MediaBrowser Token="${token}", Client="NSMusicS", Device="Desktop Client", DeviceId="NineSong", Version="${APP_VERSION}"`,
           },
           timeout: 8000,
           responseType: 'json',

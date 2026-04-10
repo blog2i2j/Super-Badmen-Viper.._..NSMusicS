@@ -1,6 +1,7 @@
 import { Jellyfin_Api_Services_Web } from '../Jellyfin_Api_Services_Web'
 import { ipcRenderer, isElectron } from '@/utils/electron/isElectron'
 import axios from 'axios'
+import { APP_VERSION } from '@/config/app_version'
 
 export class Users_ApiService_of_Je extends Jellyfin_Api_Services_Web {
   public async getUsers_ALL(): Promise<any> {
@@ -21,12 +22,12 @@ export class Users_ApiService_of_Je extends Jellyfin_Api_Services_Web {
       const endpoint = 'Users/AuthenticateByName'
       const url = `${baseUrl}/${endpoint}`
       const AccessToken = ''
-      const Version = '2.3.1'
+      const Version = APP_VERSION
       const Client = isElectron ? 'Electron Desktop' : 'Web'
       const Device = isElectron ? 'NSMusicS' : 'NineSong'
       const DeviceId = isElectron ? 'NSMusicS ' + Version : 'NineSong ' + Version
       const headers = {
-        Authorization: `MediaBrowser Token="${AccessToken}", Client="${Client}", Device="${Device}", DeviceId="${DeviceId}-GO", Version="2.3.1"`,
+        Authorization: `MediaBrowser Token="${AccessToken}", Client="${Client}", Device="${Device}", DeviceId="${DeviceId}-GO", Version="${Version}"`,
       }
       const data = {
         Username: username,

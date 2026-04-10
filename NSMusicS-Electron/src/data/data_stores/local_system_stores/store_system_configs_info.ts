@@ -4,6 +4,7 @@ import { ipcRenderer, isElectron } from '@/utils/electron/isElectron'
 import { store_router_data_info } from '@/router/router_store/store_router_data_info'
 import { store_system_configs_load } from '@/data/data_stores/local_system_stores/store_system_configs_load'
 import { store_system_configs_update } from '@/data/data_stores/local_system_stores/store_system_configs_update'
+import { APP_VERSION } from '@/config/app_version'
 
 export const store_system_configs_info = reactive({
   // Electron Desktop Kind
@@ -93,7 +94,7 @@ export const store_system_configs_info = reactive({
     if (isElectron) {
       /// update_info
       try {
-        store_system_configs_info.version = '2.3.1'
+        store_system_configs_info.version = APP_VERSION
         console.log('Current Version:', store_system_configs_info.version)
         const xmlUrl =
           'https://github.com/Super-Badmen-Viper/NSMusicS/releases/download/NSMusicS-Win-Update/NSMusicS.xml'
