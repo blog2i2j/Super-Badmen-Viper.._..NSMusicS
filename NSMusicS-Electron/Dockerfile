@@ -12,7 +12,11 @@ COPY dist/ /usr/share/nginx/html
 
 # 动态生成配置的入口脚本
 COPY docker-entrypoint.sh /
-RUN chmod +x /docker-entrypoint.sh
+# Normalize Windows CRLF worktrees so Linux containers start reliably on local
+# builds and in CI regardless of the host platform.
+RUN set -eux; \
+    sed -i 's/\r$//' /docker-entrypoint.sh /etc/nginx/conf.d/default.conf.template; \
+    chmod 755 /docker-entrypoint.sh
 
 EXPOSE 80
 

@@ -1,0 +1,7 @@
+# Keep Linux container/runtime files on LF across Windows and CI worktrees.
+NSMusicS-Electron/Dockerfile text eol=lf
+NSMusicS-Electron/docker-entrypoint.sh text eol=lf
+NSMusicS-Electron/nginx.conf text eol=lf
+NSMusicS-Electron/scripts/docker/**/*.sh text eol=lf
+NSMusicS-Electron/scripts/docker/**/*.ps1 text eol=crlf
+.github/workflows/*.yml text eol=lf

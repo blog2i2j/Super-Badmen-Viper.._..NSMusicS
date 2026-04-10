@@ -8,6 +8,11 @@ on:
         required: true
         default: false
         type: boolean
+      publish_release_tags:
+        description: When manually publishing from main, also refresh the version tag and latest.
+        required: true
+        default: false
+        type: boolean
   push:
     branches:
       - main
@@ -88,6 +93,7 @@ jobs:
         id: meta
         env:
           MANUAL_PUSH_IMAGE: ${{ github.event_name == 'workflow_dispatch' && inputs.push_image || 'false' }}
+          MANUAL_PUBLISH_RELEASE_TAGS: ${{ github.event_name == 'workflow_dispatch' && inputs.publish_release_tags || 'false' }}
         run: |
           set -euo pipefail
 
@@ -120,8 +126,13 @@ jobs:
               exit 1
             fi
             should_push=true
-            tag_one="${DOCKER_IMAGE_REPOSITORY}:edge"
-            tag_two="${DOCKER_IMAGE_REPOSITORY}:sha-${GITHUB_SHA::7}"
+            if [[ "${MANUAL_PUBLISH_RELEASE_TAGS}" == "true" ]]; then
+              tag_one="${DOCKER_IMAGE_REPOSITORY}:${version}"
+              tag_two="${DOCKER_IMAGE_REPOSITORY}:latest"
+            else
+              tag_one="${DOCKER_IMAGE_REPOSITORY}:edge"
+              tag_two="${DOCKER_IMAGE_REPOSITORY}:sha-${GITHUB_SHA::7}"
+            fi
           fi
 
           {
@@ -226,12 +237,21 @@ jobs:
           fs.mkdirSync(publishDir, { recursive: true })
 
           const requiredRootFiles = ['Dockerfile', 'docker-entrypoint.sh', 'nginx.conf']
+          const normalizedDockerTextFiles = []
           for (const fileName of requiredRootFiles) {
             const sourcePath = path.join(root, fileName)
             if (!fs.existsSync(sourcePath)) {
               fail(`required Docker context file is missing: ${sourcePath}`)
             }
-            fs.copyFileSync(sourcePath, path.join(contextDir, fileName))
+
+            const targetPath = path.join(contextDir, fileName)
+            const raw = fs.readFileSync(sourcePath, 'utf8')
+            const normalized = raw.replace(/\r\n?/g, '\n')
+            fs.writeFileSync(targetPath, normalized, 'utf8')
+
+            if (raw !== normalized) {
+              normalizedDockerTextFiles.push(fileName)
+            }
           }
 
           const copyRecursive = (sourceDir, targetDir) => {
@@ -266,6 +286,11 @@ jobs:
           appendSummary(`- dist files: ${distFiles.length}`)
           appendSummary(`- dist total bytes: ${totalBytes}`)
           appendSummary(`- staged Docker context: ${path.relative(root, contextDir).replace(/\\/g, '/')}`)
+          appendSummary(
+            `- normalized Docker text files: ${
+              normalizedDockerTextFiles.length > 0 ? normalizedDockerTextFiles.join(', ') : 'none'
+            }`
+          )
           NODE
 
           tar -C .github/workflows/.out/web-release/context -czf ".github/workflows/.out/web-release/publish/NSMusicS-Web-${NSMUSICS_VERSION}.tar.gz" .
